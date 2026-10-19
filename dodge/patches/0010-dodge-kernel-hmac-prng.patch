@@ -1,0 +1,314 @@
+From 2c36ee960e015e7436b513c7f4e52183c3f72227 Mon Sep 17 00:00:00 2001
+From: palazik <gochmyradov0@gmail.com>
+Date: Mon, 19 Oct 2026 22:43:19 +0500
+Subject: [PATCH] dodge: built-in HMAC-SHA256 kernel PRNG + entropy digest (no
+ corecrypto kext)
+
+Port of dipa-studio/ios-sweet 0014. With no corecrypto kext to install the kernel
+PRNG, register a built-in HMAC-SHA256 DRBG (same primitive as early_random), one
+mutex serializing generate/reseed across CPUs, via register_and_init_prng() at
+EARLY_BOOT. entropy.c and write_random() use the kernel's own ccsha256_ltc_di
+digest instead of the kext SHA256 dispatch table. Gated on defined(DODGE).
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ osfmk/prng/entropy.c     |  66 ++++++++++++++----
+ osfmk/prng/prng_random.c | 144 +++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 195 insertions(+), 15 deletions(-)
+
+diff --git a/osfmk/prng/entropy.c b/osfmk/prng/entropy.c
+index 18b74ff..1b10db1 100644
+--- a/osfmk/prng/entropy.c
++++ b/osfmk/prng/entropy.c
+@@ -40,6 +40,10 @@
+ #include <machine/machine_routines.h>
+ #include <libkern/section_keywords.h>
+ #include <sys/cdefs.h>
++#if defined(DODGE)
++#include <corecrypto/ccdigest.h>
++#include <corecrypto/ccsha2.h>
++#endif
+ 
+ // The number of samples we can hold in an entropy buffer.
+ #define ENTROPY_MAX_SAMPLE_COUNT (2048)
+@@ -93,13 +97,14 @@ typedef struct entropy_data {
+ 	// State for a SHA256 computation. This is used to accumulate
+ 	// entropy samples from across all CPUs. It is finalized when
+ 	// entropy is provided to the consumer of this module.
++#if defined(DODGE)
++	ccdigest_ctx_decl(CCSHA256_STATE_SIZE, CCSHA256_BLOCK_SIZE, sha256_ctx);
++#else
+ 	SHA256_CTX sha256_ctx;
++#endif
+ 
+-	// Since the corecrypto kext is not loaded when this module is
+-	// initialized, we cannot initialize the SHA256 state at that
+-	// time. Instead, we initialize it lazily during entropy
+-	// consumption. This flag tracks whether initialization is
+-	// complete.
++	// Initialize the hash lazily during entropy consumption. On Apple
++	// platforms this also waits for the corecrypto kext to be loaded.
+ 	bool sha256_ctx_init;
+ 
+ 	// A buffer to hold a bitmap with one bit per sample of an entropy
+@@ -473,6 +478,38 @@ entropy_health_test(uint32_t sample_count, entropy_sample_t *samples, __assert_o
+ 	return result;
+ }
+ 
++/* DODGE uses the same built-in digest as early_random, without a kext. */
++static void
++entropy_hash_init(void)
++{
++#if defined(DODGE)
++	ccdigest_init(&ccsha256_ltc_di, entropy_data.sha256_ctx);
++#else
++	SHA256_Init(&entropy_data.sha256_ctx);
++#endif
++}
++
++static void
++entropy_hash_update(const void *data, size_t nbytes)
++{
++#if defined(DODGE)
++	ccdigest_update(&ccsha256_ltc_di, entropy_data.sha256_ctx, nbytes, data);
++#else
++	SHA256_Update(&entropy_data.sha256_ctx, data, nbytes);
++#endif
++}
++
++static void
++entropy_hash_final(void *out)
++{
++#if defined(DODGE)
++	ccdigest_final(&ccsha256_ltc_di, entropy_data.sha256_ctx, out);
++	ccdigest_ctx_clear(CCSHA256_STATE_SIZE, CCSHA256_BLOCK_SIZE, entropy_data.sha256_ctx);
++#else
++	SHA256_Final(out, &entropy_data.sha256_ctx);
++#endif
++}
++
+ int32_t
+ entropy_provide(size_t *entropy_size, void *entropy, __unused void *arg)
+ {
+@@ -485,12 +522,13 @@ entropy_provide(size_t *entropy_size, void *entropy, __unused void *arg)
+ 	int32_t sample_count = 0;
+ 	*entropy_size = 0;
+ 
+-	// The first call to this function comes while the corecrypto kext
+-	// is being loaded. We require SHA256 to accumulate entropy
+-	// samples.
++	// Apple platforms need the corecrypto kext's SHA256 implementation.
++	// DODGE links the digest into the kernel instead.
++#if !defined(DODGE)
+ 	if (__improbable(!crypto_init)) {
+ 		return sample_count;
+ 	}
++#endif
+ 
+ 	// There is only one consumer (the kernel PRNG), but they could
+ 	// try to consume entropy from different threads. We simply fail
+@@ -499,11 +537,9 @@ entropy_provide(size_t *entropy_size, void *entropy, __unused void *arg)
+ 		return sample_count;
+ 	}
+ 
+-	// This only happens on the first call to this function. We cannot
+-	// perform this initialization in entropy_init because the
+-	// corecrypto kext is not loaded yet.
++	// Initialize the accumulator on first use, after SHA256 is available.
+ 	if (__improbable(!entropy_data.sha256_ctx_init)) {
+-		SHA256_Init(&entropy_data.sha256_ctx);
++		entropy_hash_init();
+ 		entropy_data.sha256_ctx_init = true;
+ 	}
+ 
+@@ -539,7 +575,7 @@ entropy_provide(size_t *entropy_size, void *entropy, __unused void *arg)
+ 		// We accumulate the samples regardless of whether the test
+ 		// failed or a particular sample was filtered. It cannot hurt.
+ 		entropy_data.total_sample_count += filtered_sample_count;
+-		SHA256_Update(&entropy_data.sha256_ctx, e->samples, cpu_sample_count * sizeof(e->samples[0]));
++		entropy_hash_update(e->samples, cpu_sample_count * sizeof(e->samples[0]));
+ 
+ 		// "Drain" the per-CPU buffer by resetting its sample count.
+ 		os_atomic_store(&e->sample_count, 0, relaxed);
+@@ -576,8 +612,8 @@ entropy_provide(size_t *entropy_size, void *entropy, __unused void *arg)
+ 		goto out;
+ 	}
+ 
+-	SHA256_Final(entropy, &entropy_data.sha256_ctx);
+-	SHA256_Init(&entropy_data.sha256_ctx);
++	entropy_hash_final(entropy);
++	entropy_hash_init();
+ 	entropy_data.read_sample_count = entropy_data.total_sample_count;
+ 
+ 	sample_count = n;
+diff --git a/osfmk/prng/prng_random.c b/osfmk/prng/prng_random.c
+index c52f0ab..6113c32 100644
+--- a/osfmk/prng/prng_random.c
++++ b/osfmk/prng/prng_random.c
+@@ -145,6 +145,140 @@ static struct {
+ 		     .strictFIPS = 0,
+ 	     }};
+ 
++#if defined(DODGE)
++/*
++ * The corecrypto kext normally installs the kernel PRNG. DODGE has no such
++ * kext: use the built-in HMAC-SHA256 DRBG, just as early_random does. A
++ * single mutex serializes generation and reseeding across all CPUs. This
++ * favors a small, auditable bring-up implementation over per-CPU scaling.
++ * This registers only the PRNG, not the unrelated g_crypto_funcs table.
++ */
++#include <kern/startup.h>
++
++static LCK_GRP_DECLARE(dodge_prng_group, "dodge-prng");
++static LCK_MTX_DECLARE(dodge_prng_lock, &dodge_prng_group);
++static struct cckprng_ctx dodge_prng_ctx;
++static const struct ccdrbg_nisthmac_custom dodge_prng_custom = {
++	.di = &ccsha256_ltc_di,
++	.strictFIPS = 0,
++};
++static cckprng_getentropy dodge_getentropy;
++static void *dodge_getentropy_arg;
++static unsigned dodge_max_ngens;
++static bool dodge_generators[MAX_CPUS];
++
++static struct ccdrbg_state *
++dodge_prng_state(struct cckprng_ctx *ctx)
++{
++	return (struct ccdrbg_state *)ctx->drbg_state;
++}
++
++static void
++dodge_prng_check(int status)
++{
++	if (status != CCDRBG_STATUS_OK) {
++		panic("DODGE HMAC DRBG error %d", status);
++	}
++}
++
++static void
++dodge_prng_init_with_getentropy(struct cckprng_ctx *ctx, unsigned max_ngens,
++    size_t seed_nbytes, const void *seed, size_t nonce_nbytes, const void *nonce,
++    cckprng_getentropy getentropy, void *getentropy_arg)
++{
++	assert(max_ngens > 0 && max_ngens <= MAX_CPUS);
++	ccdrbg_factory_nisthmac(&ctx->drbg_info, &dodge_prng_custom);
++	assert(ctx->drbg_info.size <= sizeof(ctx->drbg_state));
++	const char ps[] = "xnu dodge kernel random";
++	dodge_prng_check(ccdrbg_init(&ctx->drbg_info, dodge_prng_state(ctx),
++	    seed_nbytes, seed, nonce_nbytes, nonce, sizeof(ps) - 1, ps));
++	dodge_getentropy = getentropy;
++	dodge_getentropy_arg = getentropy_arg;
++	dodge_max_ngens = max_ngens;
++}
++
++static void
++dodge_prng_init(struct cckprng_ctx *ctx, size_t seed_nbytes, const void *seed,
++    size_t nonce_nbytes, const void *nonce, cckprng_getentropy getentropy,
++    void *getentropy_arg)
++{
++	dodge_prng_init_with_getentropy(ctx, MAX_CPUS, seed_nbytes, seed,
++	    nonce_nbytes, nonce, getentropy, getentropy_arg);
++}
++
++static void
++dodge_prng_initgen(__unused struct cckprng_ctx *ctx, unsigned gen_idx)
++{
++	lck_mtx_lock(&dodge_prng_lock);
++	assert(gen_idx < dodge_max_ngens);
++	assert(!dodge_generators[gen_idx]);
++	dodge_generators[gen_idx] = true;
++	lck_mtx_unlock(&dodge_prng_lock);
++}
++
++static void
++dodge_prng_reseed(struct cckprng_ctx *ctx, size_t nbytes, const void *seed)
++{
++	lck_mtx_lock(&dodge_prng_lock);
++	dodge_prng_check(ccdrbg_reseed(&ctx->drbg_info, dodge_prng_state(ctx),
++	    nbytes, seed, 0, NULL));
++	lck_mtx_unlock(&dodge_prng_lock);
++}
++
++static void
++dodge_prng_refresh(struct cckprng_ctx *ctx)
++{
++	/* The entropy callback also uses try-lock; refresh must not wait. */
++	if (!lck_mtx_try_lock(&dodge_prng_lock)) {
++		return;
++	}
++	uint8_t entropy[CCKPRNG_ENTROPY_SIZE];
++	size_t nbytes = sizeof(entropy);
++	int32_t nsamples = dodge_getentropy(&nbytes, entropy, dodge_getentropy_arg);
++	if (nsamples < 0) {
++		panic("DODGE PRNG entropy health test failed");
++	}
++	if (nsamples >= 256) {
++		assert(nbytes >= SEED_SIZE && nbytes <= sizeof(entropy));
++		dodge_prng_check(ccdrbg_reseed(&ctx->drbg_info, dodge_prng_state(ctx),
++		    nbytes, entropy, 0, NULL));
++	}
++	cc_clear(sizeof(entropy), entropy);
++	lck_mtx_unlock(&dodge_prng_lock);
++}
++
++static void
++dodge_prng_generate(struct cckprng_ctx *ctx, unsigned gen_idx,
++    size_t nbytes, void *out)
++{
++	assert(nbytes <= CCKPRNG_GENERATE_MAX_NBYTES);
++	lck_mtx_lock(&dodge_prng_lock);
++	assert(gen_idx < dodge_max_ngens && dodge_generators[gen_idx]);
++	dodge_prng_check(ccdrbg_generate(&ctx->drbg_info, dodge_prng_state(ctx),
++	    nbytes, out, 0, NULL));
++	lck_mtx_unlock(&dodge_prng_lock);
++}
++
++__startup_func
++static void
++dodge_prng_startup(void)
++{
++	/* Ensure the boot seed exists before registration erases the early DRBG. */
++	(void)early_random();
++	const struct cckprng_funcs funcs = {
++		.init = dodge_prng_init,
++		.initgen = dodge_prng_initgen,
++		.reseed = dodge_prng_reseed,
++		.refresh = dodge_prng_refresh,
++		.generate = dodge_prng_generate,
++		.init_with_getentropy = dodge_prng_init_with_getentropy,
++	};
++	register_and_init_prng(&dodge_prng_ctx, &funcs);
++	kprintf("DODGE PRNG: HMAC-SHA256 registered\n");
++}
++STARTUP(EARLY_BOOT, STARTUP_RANK_FIRST, dodge_prng_startup);
++#endif /* DODGE */
++
+ static void read_erandom(void * buf, size_t nbytes);
+ 
+ /*
+@@ -339,12 +473,22 @@ int
+ write_random(void * buffer, u_int numbytes)
+ {
+ 	uint8_t seed[SHA256_DIGEST_LENGTH];
++#if defined(DODGE)
++	/* Hash without depending on the absent corecrypto kext's dispatch table. */
++	const struct ccdigest_info *di = &ccsha256_ltc_di;
++	ccdigest_di_decl(di, ctx);
++	ccdigest_init(di, ctx);
++	ccdigest_update(di, ctx, numbytes, buffer);
++	ccdigest_final(di, ctx, seed);
++	ccdigest_di_clear(di, ctx);
++#else
+ 	SHA256_CTX ctx;
+ 
+ 	/* hash the input to minimize the time we need to hold the lock */
+ 	SHA256_Init(&ctx);
+ 	SHA256_Update(&ctx, buffer, numbytes);
+ 	SHA256_Final(seed, &ctx);
++#endif
+ 
+ 	prng_funcs.reseed(prng_ctx, sizeof(seed), seed);
+ 	cc_clear(sizeof(seed), seed);
+-- 
+2.55.0
+
