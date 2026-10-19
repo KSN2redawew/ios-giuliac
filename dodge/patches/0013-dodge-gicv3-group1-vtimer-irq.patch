@@ -1,0 +1,217 @@
+From aa987e259e73295f8fb2ba4a5520cbccfbd7192a Mon Sep 17 00:00:00 2001
+From: palazik <gochmyradov0@gmail.com>
+Date: Mon, 19 Oct 2026 23:12:15 +0500
+Subject: [PATCH] dodge: GICv3 Group-1 NS virtual-timer IRQ (TrustZone owns
+ Group 0)
+
+Port of dipa-studio/ios-sweet's GIC rework (0004). On real Qualcomm hardware the
+GIC has two security states and TrustZone owns Group 0, so the architected timer
+(INTID 27) and IPIs that VMAPPLE takes as Group-0 FIQs are undeliverable to NS-EL1
+that way. Move everything to Group 1 NS IRQ:
+- pe_fiq.c (#if DODGE): GICR_IGROUPR0=0xFFFFFFFF, IPRIORITYR0, enable vtimer+IPI
+  SGI; ICC_BPR1; GICD_CTLR |= ARE_NS|ENABLEGRP1A|ENABLEGRP1 (wait RWP); ICC_IGRPEN1=1.
+- sleh.c sleh_irq (#if DODGE): read ICC_IAR1_EL1, vtimer INTID -> rtclock_intr,
+  SGI (<16) -> cpu_signal_handler, else -> cdp->interrupt_handler; EOI via ICC_EOIR1.
+- start.s: skip the VMAPPLE SCTLR self-check for DODGE too.
+- DODGE.h: add GICD_CTLR_ARE_NS/ENABLEGRP1/ENABLEGRP1A/RWP, GICR_IPRIORITYR0,
+  DODGE_IPI_SGI=1; fix ICC_CTLR_EOIMODE to 0x2 (bit[1] per Arm IHI 0069).
+vtimer INTID 27 verified from the OP13 DTS. Runtime validation needs QEMU/device.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ osfmk/arm64/sleh.c            | 38 +++++++++++++++++++++++++++++++++++
+ osfmk/arm64/start.s           |  4 ++--
+ pexpert/arm/pe_fiq.c          | 30 +++++++++++++++++++++++++++
+ pexpert/pexpert/arm64/DODGE.h | 10 ++++++++-
+ 4 files changed, 79 insertions(+), 3 deletions(-)
+
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+index c40c6ea..36d7120 100644
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -32,6 +32,7 @@
+ #include <arm/misc_protos.h>
+ #include <arm/thread.h>
+ #include <arm/rtclock.h>
++#include <arm/machine_cpu.h> /* dodge: cpu_signal_handler() for the Group 1 IPI path */
+ #include <arm/trap.h> /* for IS_ARM_GDB_TRAP() et al */
+ #include <arm64/proc_reg.h>
+ #include <arm64/machine_machdep.h>
+@@ -1855,6 +1856,42 @@ sleh_irq(arm_saved_state_t *state)
+ #endif
+ 
+ 
++#if defined(DODGE)
++	/*
++	 * dodge: TrustZone owns GIC Group 0, so the timer and IPIs that other
++	 * ARM64 targets take as FIQs arrive here as Group 1 NS IRQs.
++	 */
++	uint64_t iar = __builtin_arm_rsr64("ICC_IAR1_EL1");
++	uint32_t intid = (uint32_t)(iar & 0xFFFFFF);
++
++	if (intid >= 1020 && intid <= 1023) {
++		return; /* spurious */
++	}
++	if (intid == DODGE_VTIMER_INTID) {
++		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_TIMER);
++		cdp->cpu_decrementer = -1; /* Large */
++		INTERRUPT_MASKED_DEBUG_START(rtclock_intr, DBG_INTR_TYPE_TIMER);
++		rtclock_intr(TRUE);
++		INTERRUPT_MASKED_DEBUG_END();
++		__builtin_arm_wsr64("ICC_EOIR1_EL1", iar);
++	} else if (intid < 16) {
++		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_IPI);
++		/* Ack before handling so an IPI raised meanwhile is not lost */
++		__builtin_arm_wsr64("ICC_EOIR1_EL1", iar);
++		__builtin_arm_isb(ISB_SY);
++		cpu_signal_handler();
++	} else {
++		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_OTHER);
++		if (cdp->interrupt_handler) {
++			cdp->interrupt_handler(cdp->interrupt_target,
++			    cdp->interrupt_refCon,
++			    cdp->interrupt_nub,
++			    intid);
++		}
++		__builtin_arm_wsr64("ICC_EOIR1_EL1", iar);
++	}
++	__builtin_arm_isb(ISB_SY);
++#else
+ 	sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_OTHER);
+ 
+ #if USE_APPLEARMSMP
+@@ -1866,6 +1903,7 @@ sleh_irq(arm_saved_state_t *state)
+ 	    cdp->interrupt_nub,
+ 	    cdp->interrupt_source);
+ #endif
++#endif /* DODGE */
+ 
+ 	entropy_collect();
+ 
+diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
+index 52c7ce6..c33d316 100644
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -745,11 +745,11 @@ common_start:
+ 	MSR_SCTLR_EL1_X0
+ 	isb		sy
+ 
+-#if !VMAPPLE
++#if !VMAPPLE && !defined(DODGE)
+ 	MOV64   x1, SCTLR_EL1_DEFAULT
+ 	cmp		x0, x1
+ 	bne		.
+-#endif /* !VMAPPLE */
++#endif /* !VMAPPLE && !DODGE */
+ 
+ #if (!CONFIG_KERNEL_INTEGRITY || (CONFIG_KERNEL_INTEGRITY && !defined(KERNEL_INTEGRITY_WT)))
+ 	/* Watchtower
+diff --git a/pexpert/arm/pe_fiq.c b/pexpert/arm/pe_fiq.c
+index 3ad743f..cd64c2f 100644
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -141,11 +141,25 @@ pe_init_fiq()
+ 		}
+ 	}
+ 
++#if defined(DODGE)
++	/*
++	 * dodge: real hardware with two security states — Group 0 is TrustZone's
++	 * and non-secure writes to it are ignored. Everything we own is Group 1 NS
++	 * and arrives as an IRQ (see sleh_irq). GICR_IGROUPR0 reads back zero from
++	 * the non-secure side even after this write; delivery still works.
++	 */
++	gicr_write32(GICR_IGROUPR0, 0xFFFFFFFF);
++	for (unsigned int i = 0; i < 32; i += 4) {
++		gicr_write32(GICR_IPRIORITYR0 + i, 0xA0A0A0A0);
++	}
++	gicr_write32(GICR_ISENABLER0, (1U << DODGE_VTIMER_INTID) | (1U << DODGE_IPI_SGI));
++#else
+ 	// Configure timers and legacy FIQ to be group 0
+ 	gicr_write32(GICR_IGROUPR0, 0x81FFFFFF);
+ 
+ 	// Enable PPI 27
+ 	gicr_write32(GICR_ISENABLER0, (1 << 27));
++#endif /* DODGE */
+ 
+ 	// Enable system register access
+ 	uint64_t icc_sre = __builtin_arm_rsr64("ICC_SRE_EL1");
+@@ -153,8 +167,12 @@ pe_init_fiq()
+ 	__builtin_arm_wsr64("ICC_SRE_EL1", icc_sre);
+ 	__builtin_arm_isb(ISB_SY);
+ 
++#if defined(DODGE)
++	__builtin_arm_wsr64("ICC_BPR1_EL1", 0);
++#else
+ 	// Set priority masks and binary point for group 0
+ 	__builtin_arm_wsr64("ICC_BPR0_EL1", 0);
++#endif /* DODGE */
+ 	__builtin_arm_wsr64("ICC_PMR_EL1", 0xFF);
+ 
+ 	// Set EOI mode of this processor
+@@ -162,12 +180,24 @@ pe_init_fiq()
+ 	icc_ctlr &= ~ICC_CTLR_EOIMODE;
+ 	__builtin_arm_wsr64("ICC_CTLR_EL1", icc_ctlr);
+ 
++#if defined(DODGE)
++	// ABL leaves only ARE_NS set; enable NS Group 1 forwarding (as Linux does)
++	uint32_t gicd_ctlr = gicd_read32(GICD_CTLR);
++	gicd_ctlr |= GICD_CTLR_ARE_NS | GICD_CTLR_ENABLEGRP1A | GICD_CTLR_ENABLEGRP1;
++	gicd_write32(GICD_CTLR, gicd_ctlr);
++	while (gicd_read32(GICD_CTLR) & GICD_CTLR_RWP) {
++		;
++	}
++	__builtin_arm_wsr64("ICC_IGRPEN1_EL1", 1);
++	__builtin_arm_isb(ISB_SY);
++#else
+ 	// Enable the forwarding of the vtimer interrupt
+ 	uint32_t gicd_ctlr = gicd_read32(GICD_CTLR);
+ 	gicd_ctlr |= GICD_CTLR_ENABLEGRP0;
+ 	gicd_write32(GICD_CTLR, gicd_ctlr);
+ 	__builtin_arm_wsr64("ICC_IGRPEN0_EL1", 1);
+ 	__builtin_arm_isb(ISB_SY);
++#endif /* DODGE */
+ }
+ #else
+ void
+diff --git a/pexpert/pexpert/arm64/DODGE.h b/pexpert/pexpert/arm64/DODGE.h
+index b44aa51..ef028fd 100644
+--- a/pexpert/pexpert/arm64/DODGE.h
++++ b/pexpert/pexpert/arm64/DODGE.h
+@@ -56,11 +56,17 @@
+ 
+ #define GICD_CTLR                 0x0
+ #define GICD_CTLR_ENABLEGRP0      0x1
++/* Non-secure GICD_CTLR view (ARE_NS): TrustZone owns Group 0, we use Group 1 NS. */
++#define GICD_CTLR_ENABLEGRP1      0x1
++#define GICD_CTLR_ENABLEGRP1A     0x2
++#define GICD_CTLR_ARE_NS          0x10
++#define GICD_CTLR_RWP             0x80000000
+ 
+ #define GICR_TYPER                0x08
+ #define GICR_WAKER                0x14
+ #define GICR_IGROUPR0             0x10080
+ #define GICR_ISENABLER0           0x10100
++#define GICR_IPRIORITYR0          0x10400
+ 
+ #define GICR_TYPER_AFFINITY_VALUE_SHIFT  32
+ #define GICR_TYPER_LAST                  0x10
+@@ -68,12 +74,14 @@
+ #define GICR_WAKER_PROCESSORSLEEP        0x2
+ #define GICR_WAKER_CHILDRENASLEEP        0x4
+ 
+-#define ICC_CTLR_EOIMODE          0x1
++#define ICC_CTLR_EOIMODE          0x2   /* ICC_CTLR_EL1.EOImode = bit[1] (Arm IHI 0069) */
+ #define ICC_SRE_SRE               0x1
+ 
+ /* Virtual timer PPI on SM8750 = PPI 11 = INTID 27 (also provided via the ADT
+  * "virtual-timer-intid" property for the pe_fiq GICv3 path). */
+ #define DODGE_VTIMER_INTID        27
++/* SGI used for cross-CPU signalling (IPI) on the Group 1 NS path. */
++#define DODGE_IPI_SGI             1
+ 
+ #endif /* ! ASSEMBLER */
+ 
+-- 
+2.55.0
+
