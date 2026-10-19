@@ -31,6 +31,12 @@ env:
   MACOS_VERSION: ${{ inputs.macos_version || '13.5' }}
   KERNEL_CONFIG: ${{ inputs.kernel_config || 'DEVELOPMENT' }}
   MACHINE_CONFIG: ${{ inputs.machine_config || 'DODGE' }}
+  # xnu's makedefs honor `CCACHE` (KCC = $(CCACHE) $(CC)); env wins over `?=`.
+  # Across runs only our few patched files change, so most .o compiles cache-hit.
+  CCACHE: ccache
+  CCACHE_DIR: /Users/runner/.ccache
+  CCACHE_MAXSIZE: "3G"
+  CCACHE_SLOPPINESS: time_macros,file_macro,include_file_mtime,include_file_ctime,pch_defines
 
 jobs:
   build:
@@ -40,6 +46,15 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+
+      - name: ccache cache
+        uses: actions/cache@v4
+        with:
+          path: /Users/runner/.ccache
+          key: ccache-xnu-${{ env.MACHINE_CONFIG }}-${{ github.sha }}
+          restore-keys: |
+            ccache-xnu-${{ env.MACHINE_CONFIG }}-
+            ccache-xnu-
 
       - name: Fetch build script
         run: |
@@ -56,7 +71,9 @@ jobs:
 
       - name: Deps
         run: |
-          brew install jq gum bash cmake ninja
+          brew install jq gum bash cmake ninja ccache
+          ccache -M "$CCACHE_MAXSIZE"
+          ccache -z   # zero stats so the post-build 'ccache -s' shows this run
           # build.sh only checks that xcodes exists (Xcode is preinstalled); no bottle on macOS 14
           printf '#!/bin/sh\nexit 0\n' | sudo tee /usr/local/bin/xcodes >/dev/null
           sudo chmod +x /usr/local/bin/xcodes
@@ -74,6 +91,10 @@ jobs:
           # keep going after errors so one run reports every compile failure
           MAKEFLAGS: ${{ inputs.keep_going == 'false' && '' || '-k' }}
         run: bash build.sh
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s
 
       - name: Package build tree for local compiles
         if: always()
