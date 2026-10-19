@@ -28,6 +28,9 @@ no license; model on Apple's open APSL headers and write our own.
 
 ## Device policy — follow THIS, not sweet's
 The boot must be **NON-DESTRUCTIVE**. **Never wipe userdata; never delete Android.**
+**Read `RECOVERY.md` before any on-device test** — a sibling port destroyed its
+LUN0 GPT via the iOS UFS driver; RECOVERY.md has the never-do list, the GPT-backup
+commands, and the safe boot-args (no `ufsrw`/`rootrw`).
 - Bring-up uses temporary `fastboot boot <image>` (loaded into RAM, nothing flashed).
 - If a flash is ever unavoidable, use the **inactive A/B slot** and switch back for
   Android. The iOS root is a FILE / ramdisk — never written over an Android partition.
