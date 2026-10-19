@@ -1,0 +1,61 @@
+From c040ec358901dab0da5304cb1d172a2c0c4513fd Mon Sep 17 00:00:00 2001
+From: palazik <gochmyradov0@gmail.com>
+Date: Mon, 19 Oct 2026 17:21:54 +0500
+Subject: [PATCH] dodge: stub APPLY_TUNABLES (start.s) and ptep_get_iommu
+ (pmap)
+
+Build 4 compiled all of BSD; only pmap.o and start.o failed:
+ - osfmk/arm64/start.s includes <arm64/tunables/tunables.s> (Apple per-SoC HID
+   tunables, closed). Add a stub with a no-op APPLY_TUNABLES macro.
+ - osfmk/arm/pmap/pmap.c uses ptep_get_iommu() (closed) in IOMMU-owned-PTE panic
+   paths. Add a NULL-returning stub in pmap_data.h under PVH_FLAG_IOMMU.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ osfmk/arm/pmap/pmap_data.h      | 15 +++++++++++++++
+ osfmk/arm64/tunables/tunables.s |  7 +++++++
+ 2 files changed, 22 insertions(+)
+ create mode 100644 osfmk/arm64/tunables/tunables.s
+
+diff --git a/osfmk/arm/pmap/pmap_data.h b/osfmk/arm/pmap/pmap_data.h
+index 2883f63..839c009 100644
+--- a/osfmk/arm/pmap/pmap_data.h
++++ b/osfmk/arm/pmap/pmap_data.h
+@@ -456,6 +456,21 @@ pvh_ptep_is_iommu(const pt_entry_t *ptep)
+ #endif /* PVH_FLAG_IOMMU */
+ }
+ 
++#ifdef PVH_FLAG_IOMMU
++/*
++ * dodge: ptep_get_iommu() is only provided by Apple's closed pmap library. It is
++ * referenced solely in IOMMU-owned-PTE panic paths (guarded by pvh_ptep_is_iommu),
++ * which never occur on a board with no Apple IOMMUs. Provide a stub so the open
++ * build links; it returns NULL (only ever formatted into a panic string).
++ */
++static inline void *
++ptep_get_iommu(const pt_entry_t *ptep)
++{
++	#pragma unused(ptep)
++	return NULL;
++}
++#endif /* PVH_FLAG_IOMMU */
++
+ /**
+  * Sometimes the PTE pointers retrieved from the pv_head_table (from an entry of
+  * type PVH_TYPE_PTEP or PVH_TYPE_PVEP) contain flags themselves. This function
+diff --git a/osfmk/arm64/tunables/tunables.s b/osfmk/arm64/tunables/tunables.s
+new file mode 100644
+index 0000000..87fb4f6
+--- /dev/null
++++ b/osfmk/arm64/tunables/tunables.s
+@@ -0,0 +1,7 @@
++/*
++ * dodge: stub for the Apple per-SoC CPU tunables (HID chicken bits) that start.s
++ * applies via APPLY_TUNABLES. Those live in Apple's closed per-SoC sources; a
++ * generic Oryon board applies none. No-op macro so start.s assembles.
++ */
++.macro APPLY_TUNABLES midr, tmp1, tmp2
++.endmacro
+-- 
+2.55.0
+
