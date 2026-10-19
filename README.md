@@ -9,8 +9,9 @@ run the unmodified iOS userland — goes to dipa-studio. This fork adapts that m
 
 ### Credits
 - **[dipa-studio/ios-sweet](https://github.com/dipa-studio/ios-sweet)** — the method and the proven
-  patch series this fork learns from (kept intact under `xnu/patches/`, `NOTES-sweet-upstream.md`,
-  `AGENTS-sweet-upstream.md`, `README-sweet-upstream.md`). No code is copied; it has no license.
+  patch series this fork builds on (kept intact under `xnu/patches/`, `NOTES-sweet-upstream.md`,
+  `AGENTS-sweet-upstream.md`, `README-sweet-upstream.md`). We reuse and adapt its patches for
+  `dodge`, with credit.
 - **[MakrSas/ios-topaz](https://github.com/MakrSas/ios-topaz)** — *another fork of ios-sweet*
   (Redmi Note 12), so a sibling of this project (both descend from dipa-studio). Its notes flagged a
   dangerous failure mode (an iOS UFS driver that wrote to LUN0 and destroyed its GPT); those safety

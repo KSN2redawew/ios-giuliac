@@ -79,6 +79,12 @@ Credit/source: MakrSas/ios-topaz (Redmi Note 12) + dipa-studio/ios-sweet. See RE
     outside it); never issue a write that can reach sector 0 / the backup GPT of any LUN.
   * dipa's console-log-to-userdata trick (sweet 0047: writes the kernel log into the LAST blocks of
     userdata) is a WRITE to a real partition — do NOT port it as-is; use RAM/UART/QEMU log instead.
+  * REUSE, don't reinvent (user 2026-10-19): at the storage stage port dipa's UFS driver
+    (sweet 0028 ufs-root-device, 0030 ufs-writes, 0031 read-write-root, 0034 ufs-dma) AND
+    **topaz's `0088-topaz-gpt-watchdog.patch`** (MakrSas's fix added AFTER the GPT loss), adapted to
+    dodge and credited. NOTE dipa's 0030 already "re-checks partition bounds before every write" yet
+    topaz still lost its GPT -> the bounds check alone is INSUFFICIENT; the gpt-watchdog is the real
+    guard. Reuse their patches + credit (user's call 2026-10-19; don't fuss over licenses).
 - **fastboot rules (RECOVERY.md):** never `fastboot flash partition`/`erase`/`format`; `fastboot boot`
   only; back up LUN0 GPT before every test.
 
