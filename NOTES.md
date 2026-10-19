@@ -65,6 +65,23 @@ History of the build-enabling iteration (patches 0001-0006):
   SweetGIC/SweetPMGR; we currently DROPPED USE_APPLEARMSMP (patch 0002, legacy path).
   Revisit at the SMP milestone — pick whichever reaches multi-core first.
 
+## Known sibling-port BUGS to NOT reintroduce in dodge (read before porting those)
+Credit/source: MakrSas/ios-topaz (Redmi Note 12) + dipa-studio/ios-sweet. See RECOVERY.md.
+- **UFS driver destroyed LUN0's GPT (topaz).** When we port dipa's UFS/root patches (sweet
+  0021-0034: mockfs ramdisk root, ufs-root-device, ufs-writes, read-write-root, ufs-dma, ufs-faster),
+  the dodge storage driver MUST be safe by construction:
+  * NON-DESTRUCTIVE is a project rule — the iOS root is a FILE / ramdisk / dedicated image, NEVER a
+    raw Android partition, and the driver must NEVER touch LUN0's GPT (first 34 + last 33 sectors) or
+    any partition table.
+  * Bring-up is READ-ONLY: boot WITHOUT `ufsrw=1 rootrw=1`. Do not enable writes until the driver is
+    audited and bounds-checked.
+  * When writes are finally enabled, clamp every write to the declared root extent (reject any LBA
+    outside it); never issue a write that can reach sector 0 / the backup GPT of any LUN.
+  * dipa's console-log-to-userdata trick (sweet 0047: writes the kernel log into the LAST blocks of
+    userdata) is a WRITE to a real partition — do NOT port it as-is; use RAM/UART/QEMU log instead.
+- **fastboot rules (RECOVERY.md):** never `fastboot flash partition`/`erase`/`format`; `fastboot boot`
+  only; back up LUN0 GPT before every test.
+
 ## QEMU (Arch Linux testbed — see ~/ios18_op13/ios16-arch-qemu-prompt.txt)
 dipa already built a QEMU harness (in `tools/`, study + adapt for dodge, don't copy):
 - `tools/mkadt.py OUT.adt --qemu` = QEMU-virt ADT: GICD 0x08000000, GICR 0x080a0000,

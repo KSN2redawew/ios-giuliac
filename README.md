@@ -7,7 +7,18 @@ got iOS 16 + XNU booting on a Qualcomm phone (Redmi Note 10 Pro, `sweet`, SM7150
 method — build XNU from source, add a non-Apple board config reusing XNU's built-in GICv3 + open pmap,
 run the unmodified iOS userland — goes to dipa-studio. This fork adapts that method to a different device.
 
-> Early bring-up. Nothing here boots yet; the kernel is still being made to compile for `dodge`.
+### Credits
+- **[dipa-studio/ios-sweet](https://github.com/dipa-studio/ios-sweet)** — the method and the proven
+  patch series this fork learns from (kept intact under `xnu/patches/`, `NOTES-sweet-upstream.md`,
+  `AGENTS-sweet-upstream.md`, `README-sweet-upstream.md`). No code is copied; it has no license.
+- **[MakrSas/ios-topaz](https://github.com/MakrSas/ios-topaz)** — a sibling iOS-16-on-Qualcomm port
+  (Redmi Note 12) whose notes flagged a dangerous failure mode (an iOS UFS driver that wrote to LUN0
+  and destroyed its GPT). Those safety rules are captured in **`RECOVERY.md`** and must be followed
+  on `dodge`.
+
+> Status: **the XNU kernel now builds from source for `dodge`** (plain arm64, no PAC, `NO_MONITOR`,
+> GICv3, 16K — a fully-linked `kernel.development.dodge` Mach-O). Boot bring-up is next; nothing boots
+> to iOS yet. **Before any on-device test, read `RECOVERY.md`.**
 
 ## Layout
 - **`dodge/`** — our OnePlus 13 work (new):
@@ -17,6 +28,12 @@ run the unmodified iOS userland — goes to dipa-studio. This fork adapts that m
     - `0002` — open-build fixes (proc_reg DODGE case, pmap `reserved10` rename, legacy IOCPU+PSCI
       path, SART/UAT IOMMU header stubs).
     - `0003` — `NO_MONITOR` pmap page-range lockdown helpers + a forward decl.
+    - `0004` — no-op `APPLY_TUNABLES` + `ptep_get_iommu` stub.
+    - `0005` — closed-lib osfmk gaps: `amcc_rorgn`/`kpc` stubs, cache asm labels,
+      `ml_enable_monitor`, `pmap_pending_preemption`, `SleepToken` guard.
+    - `0006` — drop apple-SoC-only KPI exports (DART/SART/UAT/NVMe-PPL/`pmap_iommu`).
+- **`RECOVERY.md`** — on-device safety & recovery (read before testing). **`NOTES.md`** — the active
+  dodge handoff; **`AGENTS.md`** — how to work here (non-destructive policy).
 - **`xnu/patches/`** — dipa-studio's original `sweet` patch series, **kept intact as the reference** we
   adapt device drivers from (GICv3 timer, PSCI SMP, UFS/HFS root, HID, display, …). Not applied to `dodge`.
 - `shim/`, `tools/` — dipa-studio's loader/shim and tooling; adapted for `dodge` as we go.
