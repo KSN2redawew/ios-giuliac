@@ -1,0 +1,65 @@
+From 592cae42fdcaea38f36e9bb1f77832cb1eb3f18f Mon Sep 17 00:00:00 2001
+From: palazik <gochmyradov0@gmail.com>
+Date: Mon, 19 Oct 2026 17:07:45 +0500
+Subject: [PATCH] dodge: NO_MONITOR pmap lockdown helpers + forward decl
+
+Build 3 reached pmap.c with only PPL-plumbing gaps left:
+ - pmap_phys_write_disable() used in pmap_enter() before its static definition
+   -> add a forward declaration.
+ - pmap_cs_(un)lockdown_pages() call pmap_ppl_(un)lockdown_pages() (plural) in
+   their non-monitor path, but the open tree only ships the singular
+   pmap_ppl_lockdown_page (XNU_MONITOR-only); the plurals are closed-source.
+   Implement them for NO_MONITOR over pmap_page_protect(), like
+   pmap_phys_write_disable()'s own #else branch.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ osfmk/arm/pmap/pmap.c | 25 +++++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+index fc2096f..175066c 100644
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -93,6 +93,9 @@
+ 
+ #include <pexpert/device_tree.h>
+ 
++/* dodge: forward decl; defined static below, used earlier in pmap_enter(). */
++static void pmap_phys_write_disable(vm_address_t va);
++
+ #include <san/kasan.h>
+ #include <sys/cdefs.h>
+ 
+@@ -11614,6 +11617,28 @@ pmap_unpin_kernel_pages(vm_offset_t kva __unused, size_t nbytes __unused)
+ {
+ }
+ 
++/*
++ * dodge (NO_MONITOR): the plural page-range lockdown helpers are only provided by
++ * Apple's closed pmap library for monitor builds. For an open, monitor-less build
++ * implement them over the generic VM primitive, like pmap_phys_write_disable().
++ */
++MARK_AS_PMAP_TEXT static void
++pmap_ppl_lockdown_pages(vm_address_t kva, vm_size_t size, uint64_t lockdown_flag __unused, bool ppl_writable)
++{
++	for (vm_size_t offset = 0; offset < size; offset += PAGE_SIZE) {
++		pmap_page_protect(atop_kernel(kvtophys(kva + offset)),
++		    ppl_writable ? (VM_PROT_READ | VM_PROT_WRITE) : VM_PROT_READ);
++	}
++}
++
++MARK_AS_PMAP_TEXT static void
++pmap_ppl_unlockdown_pages(vm_address_t kva, vm_size_t size, uint64_t lockdown_flag __unused, bool ppl_writable __unused)
++{
++	for (vm_size_t offset = 0; offset < size; offset += PAGE_SIZE) {
++		pmap_page_protect(atop_kernel(kvtophys(kva + offset)), VM_PROT_ALL);
++	}
++}
++
+ #endif /* !XNU_MONITOR */
+ 
+ 
+-- 
+2.55.0
+
