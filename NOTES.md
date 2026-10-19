@@ -7,7 +7,12 @@ code (no license); write our own, credit dipa.
 
 ## Agent handoff / active work (2026-10-19)
 
-**STATE: kernel does not compile fully yet — build-enabling iteration on CI.**
+**STATE: 🎉 KERNEL BUILDS. `kernel.development.dodge` Mach-O produced by CI (build 8,
+run 39264404384, SHA 5bfcdc1, all steps success). Artifacts: xnu-kernel (~54 MB) +
+xnu-buildtree (~21 MB). Patches 0001-0006. Next = verify the Mach-O (arm64, not
+arm64e) then boot bring-up (QEMU first, then phone).**
+
+History of the build-enabling iteration (patches 0001-0006):
 - Local xnu checkout we author in: `~/ios18_op13/work/ios16/xnu/` (git, author
   palazik <gochmyradov0@gmail.com>). Patches exported to
   `~/ios18_op13/work/ios16/patches/` and copied into `dodge/patches/`.
@@ -28,13 +33,13 @@ code (no license); write our own, credit dipa.
     for !APPLE_ARM64_ARCH_FAMILY), ml_enable_monitor() no-op (#if DODGE),
     pmap_pending_preemption() -> _pmap_pending_preemption_real(), SleepToken under
     WITH_CLASSIC_S2R. Fixes build 6's "No rule to make target amcc_rorgn_*/kpc.c".
+  - 0006 drop apple-SoC-only KPI exports (config/Private{,.arm64}.exports): the
+    DART/SART/UAT/NVMe-PPL/pmap_iommu/IOUnifiedAddressTranslator/pmap_cs symbols the
+    kernel doesn't define. Fixes build 7's check_all_exports / Private.symbolset Error 1.
 - CI: `gh workflow run xnu.yml -R palazik/ios-dodge -f kernel_config=DEVELOPMENT -f machine_config=DODGE -f keep_going=true`
-  (fork push events do NOT auto-trigger). Build 7 = run 39261994284 (SHA 4447d10,
-  keep_going=true) — IN PROGRESS at handoff; check its log for the next gap.
-- Our config matches dipa's (config_pmap_ppl nos_arm_asm nos_arm_pmap, kperf kpc,
-  sched_hygiene_debug), so expect roughly dipa's remaining 0006-0009 class of fixes
-  (master-config detail, stub apple-internal headers, kpc stub [done], drop
-  apple-SoC-only KPI exports) before a clean kernel.development.dodge Mach-O.
+  (fork push events do NOT auto-trigger). build 7 (39261994284) compiled all osfmk+bsd,
+  failed at export check -> 0006; build 8 (39264404384) = SUCCESS, kernel produced.
+  `gh run view <id> --log-failed` can return EMPTY — use `--log` (full) + grep instead.
 
 ## Key lessons from dipa's NOTES that change the dodge plan (apply when we boot)
 - **GIC timer is NOT a simple INTID-27 FIQ.** XNU's VMAPPLE GICv3 path (pexpert/arm/
@@ -44,9 +49,11 @@ code (no license); write our own, credit dipa.
   ICC_IAR1, routes the vtimer INTID to rtclock_intr, EOI via ICC_EOIR1, enable via
   ICC_IGRPEN1. This is our equivalent of dipa 0017/0018 (device-tree vtimer IRQ +
   boot-CPU driver).
-- **vtimer INTID is device-specific.** sweet virt PPI 3 -> INTID 19 (NOT 27). Our
-  DODGE.h currently has 27 from the OP13 DTS (virt PPI 11 -> 16+11 = 27); VERIFY
-  against the live DTS before trusting it (see work/sm8750/).
+- **vtimer INTID = 27, VERIFIED (2026-10-19).** OP13 DTS timer node
+  `interrupts = <1 13 ..  1 14 ..  1 11 ..  1 10 ..>` = sec-phys/phys/**virt**/hyp PPIs,
+  so virt = PPI 11 -> GICv3 INTID 16+11 = 27 (matches DODGE.h; sweet was PPI 3 = 19).
+  clock-frequency 0x124f800 = 19.2 MHz confirmed. Still CHECK GICD_TYPER SecurityExtn
+  on dodge for the Group0-FIQ-vs-Group1-IRQ decision above.
 - **PSCI conduit = SMC on Qualcomm** (VMAPPLE uses HVC). CPU_ON via SMC for SMP.
 - **Debug channel = framebuffer**, likely no usable serial (sweet UART was SPI mode).
   Need an early fb console + markers like dipa 0003 (sweet-fbcon) / 0010 (early fb
