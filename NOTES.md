@@ -12,6 +12,25 @@ run 39264404384, SHA 5bfcdc1, all steps success). Artifacts: xnu-kernel (~54 MB)
 xnu-buildtree (~21 MB). Patches 0001-0006. Next = verify the Mach-O (arm64, not
 arm64e) then boot bring-up (QEMU first, then phone).**
 
+PORTING PROGRESS (reuse+adapt dipa/topaz, credited):
+- 0007 framebuffer console DONE (build 9 run 39290737491 SUCCESS) = dipa 0003 ported: SERIAL_DODGE_FBCON,
+  kprintf drawn on the panel via ADT node "dodge-fbcon" (reg/width/height/stride from the loader). OP13
+  has no kernel UART, so the panel is the debug channel.
+- DEVICE ADDRESS MAP (verified from work/sm8750/sm8750.dts + iomem.txt — use these, NOT sweet's SM7150):
+  * UFS `ufshc@1d84000` (SAME base as sweet; Qualcomm reuse). ufs_mem 0x1d84000/0x3000, ICE 0x1d88000,
+    mcq_* present (SM8750=UFS4/MCQ; port dipa's LEGACY UTRL path for bring-up). IRQ GIC_SPI 0x109.
+  * Framebuffer (ABL cont-splash): base 0xfc800000 size 0x2b00000 (sweet was 0x9c000000). GEOMETRY not in
+    the DTS and ABL-splash geometry != panel timing -> do NOT hardcode sweet's 1080x2400/4320.
+  * GENI I2C qupv3_i2c_geni_se@9c0000/i2c@990000 (touch, later). SPMI qcom,spmi@c42d000 (buttons, later).
+- NEXT PORT, DEFERRED for correctness: dipa 0010 early-fb-debug + 0012 keep-console-after-ttbr0. dipa
+  HARDCODES sweet's fb geometry (EARLY_WIDTH 1080/HEIGHT 2400/STRIDE 4320) — wrong for dodge. Port when
+  the loader is wired, reading geometry from boot_args.Video (the Silicium GOP) instead of hardcoding;
+  the start.s stage-0 asm band should write a geometry-independent run at fb base 0xfc800000. Until then,
+  the 0007 ADT-driven fbcon is our console once serial_init runs.
+- Portable (device-agnostic) patches safe to port anytime next: 0011 physmap-alignment, 0013/0014 crypto
+  builtins (kmem rng + hmac prng, since we don't link corecrypto), 0015 trust-cache runtime, 0019 builtin
+  pthread, 0020 portable aes-cbc.
+
 History of the build-enabling iteration (patches 0001-0006):
 - Local xnu checkout we author in: `~/ios18_op13/work/ios16/xnu/` (git, author
   palazik <gochmyradov0@gmail.com>). Patches exported to
