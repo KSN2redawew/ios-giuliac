@@ -1,0 +1,359 @@
+From dd23ba6fb51e667a0531c6c61c19daaf4192e2d7 Mon Sep 17 00:00:00 2001
+From: palazik <gochmyradov0@gmail.com>
+Date: Mon, 19 Oct 2026 18:36:54 +0500
+Subject: [PATCH] dodge: fill closed-lib osfmk gaps (amcc_rorgn/kpc stubs,
+ cache asm, ml_enable_monitor)
+
+The nos_arm_asm / config_pmap_ppl / nos_arm_pmap open build references several
+sources and symbols that Apple ships only inside the closed per-SoC library, so
+osfmk failed with 'No rule to make target amcc_rorgn_ppl.c / amcc_rorgn_common.c
+/ kpc.c' and would next fail to link. This provides open equivalents:
+
+- osfmk/arm64/amcc_rorgn_common.c, amcc_rorgn_ppl.c: empty TUs (AMCC KTRR/CTRR
+  lockdown is Apple-memory-controller only; unused on DODGE / NO_MONITOR).
+- osfmk/arm64/kpc.c: arm64 kpc backend exposing no counters (kperf needs kpc;
+  shape dictated by <kern/kpc.h>). Every query returns 0, config/start ENOTSUP.
+- osfmk/arm64/caches_asm.s: label clean_mmu_dcache (used by pe_identify_machine
+  + dtrace); define CleanPoC_DcacheRegion_Force_nopreempt{,_nohid} for the
+  !APPLE_ARM64_ARCH_FAMILY path (referenced by pmap.c/pmap.h).
+- osfmk/arm64/machine_routines.c: ml_enable_monitor() no-op for DODGE
+  (arm_vm_init calls it under config_pmap_ppl; no monitor on DODGE).
+- osfmk/arm/pmap/pmap_misc.c: pmap_pending_preemption() for
+  SCHED_HYGIENE_DEBUG && (DEV||DEBUG) && !XNU_MONITOR -> base inline check.
+- osfmk/arm64/start.s: only .global/define SleepToken under WITH_CLASSIC_S2R.
+
+Method credit: dipa-studio/ios-sweet mapped these open-build gaps; implemented
+independently for DODGE from Apple's APSL headers.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ osfmk/arm/pmap/pmap_misc.c      |  15 +++
+ osfmk/arm64/amcc_rorgn_common.c |  14 +++
+ osfmk/arm64/amcc_rorgn_ppl.c    |  13 +++
+ osfmk/arm64/caches_asm.s        |  20 ++++
+ osfmk/arm64/kpc.c               | 168 ++++++++++++++++++++++++++++++++
+ osfmk/arm64/machine_routines.c  |  13 +++
+ osfmk/arm64/start.s             |   2 +-
+ 7 files changed, 244 insertions(+), 1 deletion(-)
+ create mode 100644 osfmk/arm64/amcc_rorgn_common.c
+ create mode 100644 osfmk/arm64/amcc_rorgn_ppl.c
+ create mode 100644 osfmk/arm64/kpc.c
+
+diff --git a/osfmk/arm/pmap/pmap_misc.c b/osfmk/arm/pmap/pmap_misc.c
+index b820595..dbc3b77 100644
+--- a/osfmk/arm/pmap/pmap_misc.c
++++ b/osfmk/arm/pmap/pmap_misc.c
+@@ -38,6 +38,21 @@
+  */
+ 
+ 
++#if SCHED_HYGIENE_DEBUG && (DEVELOPMENT || DEBUG) && !XNU_MONITOR
++/*
++ * dodge: for these configs pmap.h declares pmap_pending_preemption() out of
++ * line (see osfmk/arm/pmap/pmap.h), expecting Apple's closed per-SoC pmap to
++ * supply a version that also accounts for monitor state.  With no PPL/monitor
++ * there is no extra state, so fall back to the inline base check the header
++ * already provides for every other config.
++ */
++bool
++pmap_pending_preemption(void)
++{
++	return _pmap_pending_preemption_real();
++}
++#endif /* SCHED_HYGIENE_DEBUG && (DEVELOPMENT || DEBUG) && !XNU_MONITOR */
++
+ void
+ pmap_abandon_measurement(void)
+ {
+diff --git a/osfmk/arm64/amcc_rorgn_common.c b/osfmk/arm64/amcc_rorgn_common.c
+new file mode 100644
+index 0000000..3cca5b4
+--- /dev/null
++++ b/osfmk/arm64/amcc_rorgn_common.c
+@@ -0,0 +1,14 @@
++/*
++ * dodge (OnePlus 13, SM8750): osfmk/conf/files.arm64 compiles this file for
++ * nos_arm_asm, but Apple only ships the real source inside the closed per-SoC
++ * library.  It implements the AMCC read-only region (the KTRR/CTRR kernel-text
++ * lockdown), which drives an Apple memory-controller block that does not exist
++ * on this device.  DODGE builds without KERNEL_INTEGRITY_KTRR/CTRR, so nothing
++ * references it; this translation unit exists only to satisfy the build rule.
++ *
++ * Method credit: dipa-studio/ios-sweet first mapped out the open-build gaps in
++ * Apple's nos_arm_asm/NO_MONITOR configuration.  Written independently for DODGE.
++ */
++#include <stdint.h>
++
++static const uint8_t dodge_amcc_rorgn_common_placeholder __attribute__((unused)) = 0;
+diff --git a/osfmk/arm64/amcc_rorgn_ppl.c b/osfmk/arm64/amcc_rorgn_ppl.c
+new file mode 100644
+index 0000000..a241660
+--- /dev/null
++++ b/osfmk/arm64/amcc_rorgn_ppl.c
+@@ -0,0 +1,13 @@
++/*
++ * dodge (OnePlus 13, SM8750): osfmk/conf/files.arm64 compiles this file for
++ * "nos_arm_asm config_pmap_ppl", but the real source ships only inside Apple's
++ * closed per-SoC library.  Like amcc_rorgn_common.c it is the AMCC read-only
++ * region (KTRR/CTRR) lockdown for Apple memory-controller hardware that is not
++ * present on this device, and no DODGE code path calls into it.  This file
++ * exists only so the build rule has a source to compile.
++ *
++ * Method credit: dipa-studio/ios-sweet.  Written independently for DODGE.
++ */
++#include <stdint.h>
++
++static const uint8_t dodge_amcc_rorgn_ppl_placeholder __attribute__((unused)) = 0;
+diff --git a/osfmk/arm64/caches_asm.s b/osfmk/arm64/caches_asm.s
+index f2c2a00..14174e4 100644
+--- a/osfmk/arm64/caches_asm.s
++++ b/osfmk/arm64/caches_asm.s
+@@ -212,6 +212,7 @@ L_ipui_loop:
+ 	.globl EXT(CleanPoC_Dcache)
+ 	.globl EXT(clean_mmu_dcache)
+ LEXT(CleanPoC_Dcache)
++LEXT(clean_mmu_dcache)		/* dodge: declared .globl but Apple defines the label in the closed lib; alias to CleanPoC_Dcache (both clean all D-cache to PoC) */
+ #if  defined(APPLE_ARM64_ARCH_FAMILY)
+ 	dsb		sy
+ 	ret
+@@ -342,6 +343,25 @@ LEXT(CleanPoC_DcacheRegion_Force)
+ 	b		EXT(CleanPoC_DcacheRegion_internal)
+ #endif /* APPLE_ARM64_ARCH_FAMILY */
+ 
++#if !defined(APPLE_ARM64_ARCH_FAMILY)
++/*
++ *	void CleanPoC_DcacheRegion_Force_nopreempt(vm_offset_t va, size_t length)
++ *	void CleanPoC_DcacheRegion_Force_nopreempt_nohid(vm_offset_t va, size_t length)
++ *
++ *		dodge: Apple's variants toggle implementation-defined HID bits around
++ *		the DC CVAC sequence and are defined only in the closed per-SoC lib.
++ *		Generic ARMv8 has no such bits, so both reduce to the plain region
++ *		clean.  pmap.h/pmap.c (nos_arm_pmap) reference these symbols.
++ */
++	.text
++	.align 2
++	.globl EXT(CleanPoC_DcacheRegion_Force_nopreempt)
++	.globl EXT(CleanPoC_DcacheRegion_Force_nopreempt_nohid)
++LEXT(CleanPoC_DcacheRegion_Force_nopreempt)
++LEXT(CleanPoC_DcacheRegion_Force_nopreempt_nohid)
++	b		EXT(CleanPoC_DcacheRegion_internal)
++#endif /* !APPLE_ARM64_ARCH_FAMILY */
++
+ /*
+  *	void FlushPoC_Dcache(void)
+  *
+diff --git a/osfmk/arm64/kpc.c b/osfmk/arm64/kpc.c
+new file mode 100644
+index 0000000..4f9c35d
+--- /dev/null
++++ b/osfmk/arm64/kpc.c
+@@ -0,0 +1,168 @@
++/*
++ * dodge (OnePlus 13, SM8750): arm64 kpc (kernel performance counters) backend.
++ *
++ * Apple's osfmk/arm64/kpc.c programs the Apple CPU PMU through
++ * implementation-defined system registers and ships only inside the KDK's
++ * closed per-SoC library.  XNU does not build without kperf, and kperf pulls in
++ * kpc, so DODGE needs an arch backend to link against.  This one exposes no
++ * hardware counters: every class is empty, every query returns zero, and every
++ * attempt to configure or start counting fails cleanly with ENOTSUP.  This is
++ * harmless for bring-up; the Oryon PMU can be wired up later if ever needed.
++ *
++ * The function set below is dictated entirely by the arch interface Apple
++ * declares in <kern/kpc.h> (APSL), so there is only one correct shape for it.
++ * Method credit: dipa-studio/ios-sweet.  Written independently for DODGE.
++ */
++
++#include <mach/mach_types.h>
++#include <machine/machine_routines.h>
++#include <kern/processor.h>
++#include <kern/kpc.h>
++#include <sys/errno.h>
++
++/* Exported to BSD via a sysctl (bsd/kern/kern_kpc.c); no PC capture here. */
++int kpc_pc_capture = 0;
++
++void
++kpc_arch_init(void)
++{
++}
++
++uint32_t
++kpc_get_classes(void)
++{
++	return 0;
++}
++
++int
++kpc_get_pmu_version(void)
++{
++	return KPC_PMU_ERROR;
++}
++
++uint32_t
++kpc_fixed_count(void)
++{
++	return 0;
++}
++
++uint32_t
++kpc_fixed_config_count(void)
++{
++	return 0;
++}
++
++uint64_t
++kpc_fixed_max(void)
++{
++	return 0;
++}
++
++uint32_t
++kpc_configurable_count(void)
++{
++	return 0;
++}
++
++uint32_t
++kpc_configurable_config_count(uint64_t pmc_mask __unused)
++{
++	return 0;
++}
++
++uint64_t
++kpc_configurable_max(void)
++{
++	return 0;
++}
++
++uint32_t
++kpc_rawpmu_config_count(void)
++{
++	return 0;
++}
++
++int
++kpc_get_rawpmu_config(kpc_config_t *configv __unused)
++{
++	return 0;
++}
++
++boolean_t
++kpc_is_running_fixed(void)
++{
++	return FALSE;
++}
++
++boolean_t
++kpc_is_running_configurable(uint64_t pmc_mask __unused)
++{
++	return FALSE;
++}
++
++int
++kpc_get_fixed_config(kpc_config_t *configv __unused)
++{
++	return 0;
++}
++
++int
++kpc_get_fixed_counters(uint64_t *counterv __unused)
++{
++	return 0;
++}
++
++int
++kpc_get_configurable_config(kpc_config_t *configv __unused, uint64_t pmc_mask __unused)
++{
++	return 0;
++}
++
++int
++kpc_get_configurable_counters(uint64_t *counterv __unused, uint64_t pmc_mask __unused)
++{
++	return 0;
++}
++
++int
++kpc_get_all_cpus_counters(uint32_t classes __unused, int *curcpu, uint64_t *buf __unused)
++{
++	if (curcpu != NULL) {
++		*curcpu = cpu_number();
++	}
++	return 0;
++}
++
++int
++kpc_set_config_arch(struct kpc_config_remote *mp_config __unused)
++{
++	return ENOTSUP;
++}
++
++int
++kpc_set_period_arch(struct kpc_config_remote *mp_config __unused)
++{
++	return ENOTSUP;
++}
++
++int
++kpc_set_running_arch(struct kpc_running_remote *mp_config __unused)
++{
++	return ENOTSUP;
++}
++
++int
++kpc_set_sw_inc(uint32_t mask __unused)
++{
++	return ENOTSUP;
++}
++
++void
++kpc_idle(void)
++{
++}
++
++void
++kpc_idle_exit(void)
++{
++}
+diff --git a/osfmk/arm64/machine_routines.c b/osfmk/arm64/machine_routines.c
+index 76582da..bdb6dc9 100644
+--- a/osfmk/arm64/machine_routines.c
++++ b/osfmk/arm64/machine_routines.c
+@@ -2164,6 +2164,19 @@ ml_get_decrementer(void)
+ 	return dec;
+ }
+ 
++#if defined(DODGE)
++/*
++ * dodge: arm_vm_init() calls ml_enable_monitor() unconditionally (it is built
++ * for config_pmap_ppl).  Apple's definition enters the PPL/monitor and ships
++ * only in the closed per-SoC library.  DODGE is NO_MONITOR, so there is no
++ * monitor to enable.
++ */
++void
++ml_enable_monitor(void)
++{
++}
++#endif /* DODGE */
++
+ boolean_t
+ ml_get_timer_pending(void)
+ {
+diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
+index e5336e5..52c7ce6 100644
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -198,8 +198,8 @@ Lskip_cpu_reset_handler:
+ 	.align 3
+ 	.global EXT(LowResetVectorEnd)
+ LEXT(LowResetVectorEnd)
+-	.global	EXT(SleepToken)
+ #if WITH_CLASSIC_S2R
++	.global	EXT(SleepToken)		/* dodge: only define/export when the classic sleep token exists */
+ LEXT(SleepToken)
+ 	.space	(stSize_NUM),0
+ #endif
+-- 
+2.55.0
+
