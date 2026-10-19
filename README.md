@@ -11,10 +11,10 @@ run the unmodified iOS userland — goes to dipa-studio. This fork adapts that m
 - **[dipa-studio/ios-sweet](https://github.com/dipa-studio/ios-sweet)** — the method and the proven
   patch series this fork learns from (kept intact under `xnu/patches/`, `NOTES-sweet-upstream.md`,
   `AGENTS-sweet-upstream.md`, `README-sweet-upstream.md`). No code is copied; it has no license.
-- **[MakrSas/ios-topaz](https://github.com/MakrSas/ios-topaz)** — a sibling iOS-16-on-Qualcomm port
-  (Redmi Note 12) whose notes flagged a dangerous failure mode (an iOS UFS driver that wrote to LUN0
-  and destroyed its GPT). Those safety rules are captured in **`RECOVERY.md`** and must be followed
-  on `dodge`.
+- **[MakrSas/ios-topaz](https://github.com/MakrSas/ios-topaz)** — *another fork of ios-sweet*
+  (Redmi Note 12), so a sibling of this project (both descend from dipa-studio). Its notes flagged a
+  dangerous failure mode (an iOS UFS driver that wrote to LUN0 and destroyed its GPT); those safety
+  rules are captured in **`RECOVERY.md`** and must be followed on `dodge`.
 
 > Status: **the XNU kernel now builds from source for `dodge`** (plain arm64, no PAC, `NO_MONITOR`,
 > GICv3, 16K — a fully-linked `kernel.development.dodge` Mach-O). Boot bring-up is next; nothing boots

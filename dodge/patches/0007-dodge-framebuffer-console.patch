@@ -1,0 +1,196 @@
+From 8480f69bd185b4dd25cf78ddde2908df041917b9 Mon Sep 17 00:00:00 2001
+From: palazik <gochmyradov0@gmail.com>
+Date: Mon, 19 Oct 2026 22:02:26 +0500
+Subject: [PATCH] dodge: framebuffer console (kprintf on the panel via ADT
+ dodge-fbcon)
+
+The OnePlus 13 has no kernel-usable UART, so route pe_serial kprintf output to
+the boot framebuffer, same approach dipa-studio used on sweet. A new pe_serial
+functions backend (SERIAL_DODGE_FBCON) draws iso_font glyphs onto the framebuffer
+described by the ADT node 'dodge-fbcon' (reg=<phys size>, width, height, stride);
+the loader fills it from the UEFI GOP framebuffer. fbcon_probe() is called from
+serial_init(). Lines wrap to top (no VRAM scroll); the row past the cursor is
+blanked so the newest output is easy to find.
+
+Method credit: dipa-studio/ios-sweet (0003 sweet-framebuffer-serial-console).
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ pexpert/arm/pe_serial.c      | 146 +++++++++++++++++++++++++++++++++++
+ pexpert/pexpert/arm/protos.h |   3 +-
+ 2 files changed, 148 insertions(+), 1 deletion(-)
+
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+index 997a4ab..95b16bb 100644
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -697,6 +697,152 @@ register_serial_functions(struct pe_serial_functions *fns)
+ 	gPESF = fns;
+ }
+ 
++/*****************************************************************************/
++
++/*
++ * dodge: a framebuffer "serial" console for boards with no usable kernel UART
++ * (the OnePlus 13's debug UART is not wired for us; the panel is the only output
++ * channel, same situation dipa-studio hit on sweet). kprintf output is drawn as
++ * text onto the boot framebuffer described by the ADT node "dodge-fbcon":
++ *     reg    = <phys size>     absolute physical address of the framebuffer
++ *     width, height            pixels
++ *     stride                   bytes per scanline (32bpp, BGRA/XRGB)
++ * The loader (Silicium/XnuLoader) fills these from the UEFI GOP framebuffer.
++ * Lines wrap back to the top rather than scrolling (no memmove of VRAM); the row
++ * just past the cursor is blanked so the newest line is easy to spot.
++ *
++ * Method credit: dipa-studio/ios-sweet (sweet-fbcon). Written for dodge.
++ */
++
++extern unsigned char iso_font[256 * 16];
++
++#define DODGE_FBCON_SCALE       2
++#define DODGE_FBCON_FG          0xffffffffu
++#define DODGE_FBCON_BG          0xff000000u
++
++static volatile uint32_t *fbcon_base;
++static uint32_t fbcon_width, fbcon_height, fbcon_stride;
++static uint32_t fbcon_cols, fbcon_rows, fbcon_col, fbcon_row;
++
++static void
++fbcon_clear_row(uint32_t row)
++{
++	for (uint32_t y = row * 16 * DODGE_FBCON_SCALE; y < (row + 1) * 16 * DODGE_FBCON_SCALE; y++) {
++		volatile uint32_t *line = fbcon_base + y * (fbcon_stride / 4);
++		for (uint32_t x = 0; x < fbcon_width; x++) {
++			line[x] = DODGE_FBCON_BG;
++		}
++	}
++}
++
++static void
++fbcon_newline(void)
++{
++	fbcon_col = 0;
++	fbcon_row = (fbcon_row + 1) % fbcon_rows;
++	fbcon_clear_row(fbcon_row);
++	fbcon_clear_row((fbcon_row + 1) % fbcon_rows);
++}
++
++static void
++fbcon_init(void)
++{
++	fbcon_cols = fbcon_width / (8 * DODGE_FBCON_SCALE);
++	fbcon_rows = fbcon_height / (16 * DODGE_FBCON_SCALE);
++	fbcon_col = fbcon_row = 0;
++	for (uint32_t r = 0; r < fbcon_rows; r++) {
++		fbcon_clear_row(r);
++	}
++}
++
++static unsigned int
++fbcon_transmit_ready(void)
++{
++	return 1;
++}
++
++static void
++fbcon_transmit_data(uint8_t c)
++{
++	if (c == '\r') {
++		fbcon_col = 0;
++		return;
++	}
++	if (c == '\n') {
++		fbcon_newline();
++		return;
++	}
++	if (fbcon_col >= fbcon_cols) {
++		fbcon_newline();
++	}
++	const unsigned char *glyph = iso_font + c * 16;
++	uint32_t x0 = fbcon_col * 8 * DODGE_FBCON_SCALE, y0 = fbcon_row * 16 * DODGE_FBCON_SCALE;
++	for (uint32_t gy = 0; gy < 16; gy++) {
++		for (uint32_t sy = 0; sy < DODGE_FBCON_SCALE; sy++) {
++			volatile uint32_t *line = fbcon_base + (y0 + gy * DODGE_FBCON_SCALE + sy) * (fbcon_stride / 4) + x0;
++			for (uint32_t gx = 0; gx < 8; gx++) {
++				uint32_t px = (glyph[gy] & (1u << gx)) ? DODGE_FBCON_FG : DODGE_FBCON_BG;
++				for (uint32_t sx = 0; sx < DODGE_FBCON_SCALE; sx++) {
++					line[gx * DODGE_FBCON_SCALE + sx] = px;
++				}
++			}
++		}
++	}
++	fbcon_col++;
++}
++
++static unsigned int
++fbcon_receive_ready(void)
++{
++	return 0;
++}
++
++static uint8_t
++fbcon_receive_data(void)
++{
++	return 0;
++}
++
++SECURITY_READ_ONLY_LATE(static struct pe_serial_functions) dodge_fbcon_serial_functions =
++{
++	.init = fbcon_init,
++	.transmit_ready = fbcon_transmit_ready,
++	.transmit_data = fbcon_transmit_data,
++	.receive_ready = fbcon_receive_ready,
++	.receive_data = fbcon_receive_data,
++	.device = SERIAL_DODGE_FBCON
++};
++
++static void
++fbcon_probe(void)
++{
++	DTEntry entry;
++	uint64_t const *reg;
++	uint32_t const *val;
++	unsigned int size;
++
++	if (SecureDTFindEntry("name", "dodge-fbcon", &entry) != kSuccess ||
++	    SecureDTGetProperty(entry, "reg", (void const **)&reg, &size) != kSuccess || size < 16) {
++		return;
++	}
++	if (SecureDTGetProperty(entry, "width", (void const **)&val, &size) == kSuccess) {
++		fbcon_width = *val;
++	}
++	if (SecureDTGetProperty(entry, "height", (void const **)&val, &size) == kSuccess) {
++		fbcon_height = *val;
++	}
++	if (SecureDTGetProperty(entry, "stride", (void const **)&val, &size) == kSuccess) {
++		fbcon_stride = *val;
++	}
++	if (!fbcon_width || !fbcon_height || fbcon_stride < fbcon_width * 4) {
++		return;
++	}
++	fbcon_base = (volatile uint32_t *)ml_io_map_wcomb(reg[0], reg[1]);
++	if (fbcon_base != NULL) {
++		register_serial_functions(&dodge_fbcon_serial_functions);
++	}
++}
++
+ #if HIBERNATION
+ /**
+  * Transitions the serial driver into a mode that can be run in the hibernation
+diff --git a/pexpert/pexpert/arm/protos.h b/pexpert/pexpert/arm/protos.h
+index 404b50b..f97519e 100644
+--- a/pexpert/pexpert/arm/protos.h
++++ b/pexpert/pexpert/arm/protos.h
+@@ -47,7 +47,8 @@ typedef enum serial_device {
+ 	SERIAL_DOCKCHANNEL=0x2,
+ 	SERIAL_PI3_UART=0x4,
+ 	SERIAL_VMAPPLE_UART=0x8,
+-	SERIAL_DCC_UART=0x10
++	SERIAL_DCC_UART=0x10,
++	SERIAL_DODGE_FBCON=0x20
+ } serial_device_t;
+ 
+ kern_return_t serial_irq_enable(serial_device_t device);
+-- 
+2.55.0
+
