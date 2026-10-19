@@ -1,0 +1,144 @@
+From e9a0d2115ea28d63091d633629881a9f3502c2e8 Mon Sep 17 00:00:00 2001
+From: palazik <gochmyradov0@gmail.com>
+Date: Mon, 19 Oct 2026 23:04:47 +0500
+Subject: [PATCH] dodge: device-tree platform expert (DodgePlatformExpert)
+
+Port of dipa-studio/ios-sweet 0016. IODTPlatformExpert subclass matched via
+IONameMatch 'oneplus,dodge' (our mkadt root compatible), registered in
+KernelConfigTables under ARM64_BOARD_CONFIG_DODGE. processTopLevel publishes the
+real CPU/device nubs without requiring an Apple /options NVRAM node (OP13 has no
+NVRAM controller); getTargetName 'dodge' / getProductName 'OnePlus 13'.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ iokit/Kernel/arm/DodgePlatformExpert.cpp | 86 ++++++++++++++++++++++++
+ iokit/KernelConfigTables.cpp             |  8 +++
+ iokit/conf/files.arm64                   |  3 +
+ 3 files changed, 97 insertions(+)
+ create mode 100644 iokit/Kernel/arm/DodgePlatformExpert.cpp
+
+diff --git a/iokit/Kernel/arm/DodgePlatformExpert.cpp b/iokit/Kernel/arm/DodgePlatformExpert.cpp
+new file mode 100644
+index 0000000..aadffea
+--- /dev/null
++++ b/iokit/Kernel/arm/DodgePlatformExpert.cpp
+@@ -0,0 +1,86 @@
++/*
++ * Minimal device-tree platform expert for OnePlus 13 (dodge).
++ * Uses XNU's normal platform, power-domain and nub initialization. Hardware
++ * interrupt and power-management services are supplied by separate drivers.
++ */
++#include <pexpert/arm64/board_config.h>
++
++#if defined(DODGE)
++#include <IOKit/IOPlatformExpert.h>
++#include <IOKit/IODeviceTreeSupport.h>
++#include <IOKit/IOLib.h>
++
++class DodgePlatformExpert : public IODTPlatformExpert {
++	OSDeclareDefaultStructors(DodgePlatformExpert);
++
++public:
++	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
++	void processTopLevel(IORegistryEntry *root) APPLE_KEXT_OVERRIDE;
++	const char *deleteList(void) APPLE_KEXT_OVERRIDE;
++	const char *excludeList(void) APPLE_KEXT_OVERRIDE;
++	bool getTargetName(char *name, int maxLength) APPLE_KEXT_OVERRIDE;
++	bool getProductName(char *name, int maxLength) APPLE_KEXT_OVERRIDE;
++};
++
++OSDefineMetaClassAndStructors(DodgePlatformExpert, IODTPlatformExpert);
++
++bool
++DodgePlatformExpert::start(IOService *provider)
++{
++	IOLog("DODGE: starting device-tree platform expert\n");
++	if (!IODTPlatformExpert::start(provider)) {
++		return false;
++	}
++	registerService();
++	IOLog("DODGE: platform expert registered\n");
++	return true;
++}
++
++const char *
++DodgePlatformExpert::deleteList(void)
++{
++	return "()";
++}
++
++const char *
++DodgePlatformExpert::excludeList(void)
++{
++	return "('chosen', 'defaults', 'cpus', 'options')";
++}
++
++void
++DodgePlatformExpert::processTopLevel(IORegistryEntry *root)
++{
++	/*
++	 * The stock implementation requires an Apple NVRAM /options node.
++	 * DODGE has no NVRAM controller; publish real CPU/device nodes without
++	 * inventing one. createNubs adds the topology's logical CPU/cluster IDs.
++	 */
++	IORegistryEntry *cpus = root->childFromPath("cpus", gIODTPlane);
++	if (cpus != NULL) {
++		createNubs(this, IODTFindMatchingEntries(cpus, kIODTExclusive, NULL));
++		cpus->release();
++	}
++	createNubs(this, IODTFindMatchingEntries(root, kIODTExclusive, excludeList()));
++}
++
++bool
++DodgePlatformExpert::getTargetName(char *name, int maxLength)
++{
++	if (name == NULL || maxLength <= 0) {
++		return false;
++	}
++	strlcpy(name, "dodge", (size_t)maxLength);
++	return true;
++}
++
++bool
++DodgePlatformExpert::getProductName(char *name, int maxLength)
++{
++	if (name == NULL || maxLength <= 0) {
++		return false;
++	}
++	strlcpy(name, "OnePlus 13", (size_t)maxLength);
++	return true;
++}
++#endif /* DODGE */
+diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
+index 2b14eda..ad77a71 100644
+--- a/iokit/KernelConfigTables.cpp
++++ b/iokit/KernelConfigTables.cpp
+@@ -34,6 +34,14 @@
+ 
+ const char * gIOKernelConfigTables =
+     "("
++#if defined(ARM64_BOARD_CONFIG_DODGE)
++    "   {"
++    "     'IOClass'         = DodgePlatformExpert;"
++    "     'IOProviderClass' = IOPlatformExpertDevice;"
++    "     'IONameMatch'     = 'oneplus,dodge';"
++    "     'IOProbeScore'    = 10000:32;"
++    "   },"
++#endif
+     "   {"
+     "     'IOClass'         = IOPanicPlatform;"
+     "     'IOProviderClass' = IOPlatformExpertDevice;"
+diff --git a/iokit/conf/files.arm64 b/iokit/conf/files.arm64
+index f731d43..ac1846a 100644
+--- a/iokit/conf/files.arm64
++++ b/iokit/conf/files.arm64
+@@ -5,3 +5,6 @@ iokit/Kernel/IOPMrootDomain.cpp    					optional iokitcpp
+ 
+ # SMP
+ iokit/Kernel/arm/AppleARMSMP.cpp    					optional iokitcpp
++
++# DODGE device-tree platform (empty translation unit on other boards)
++iokit/Kernel/arm/DodgePlatformExpert.cpp                         optional iokitcpp
+-- 
+2.55.0
+
