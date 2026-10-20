@@ -1,9 +1,12 @@
 #pragma once
 #include <stdint.h>
 
-#define FB_BASE		0x9c000000UL	/* reserved-memory cont_splash_region */
-#define FB_W		1080
-#define FB_H		2400
+#define FB_BASE		0xfc800000UL	/* dodge cont_splash_region (OP13 iomem/DTS) */
+/* OP13 panel is 1.5K (1264x2772); GUESS for the shim console — verify on-device
+ * and adjust if the text is misplaced (wrong stride just mislays text; pixels
+ * still land in the cont_splash region, so "something on screen" = shim ran). */
+#define FB_W		1264
+#define FB_H		2772
 #define FB_STRIDE	(FB_W * 4)	/* a8r8g8b8, matches mainline simplefb */
 
 #define RED	0xffff0000U
