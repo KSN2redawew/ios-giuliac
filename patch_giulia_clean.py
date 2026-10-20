@@ -123,34 +123,27 @@ struct.pack_into('<I', buf, 0x4713d8, 0xd503201f) # nop (ml_phys_read_data timeo
 struct.pack_into('<I', buf, 0x471768, 0xd503201f) # nop (ml_phys_write_data timeout panic)
 print('NOPed 0x4713d8 and 0x471768 -> bypassed ml_phys latency watchdog panics!')
 
-# 11. INJECT BLUE SCREEN HANDLER AT 0x474000
+# 11. INJECT BLUE SCREEN HANDLER INTO FREE PADDING AT 0xb09100 (VA 0xfffffe0007b0d100)
+subprocess.check_call(['aarch64-linux-gnu-as', 'tools/blue_screen.s', '-o', '/tmp/blue_screen.o'], cwd='/home/ksn/ios-giuluac')
+subprocess.check_call(['aarch64-linux-gnu-ld', '--section-start=.text=0xfffffe0007b0d100', '/tmp/blue_screen.o', '-o', '/tmp/blue_screen.elf'], cwd='/home/ksn/ios-giuluac')
+subprocess.check_call(['aarch64-linux-gnu-objcopy', '-O', 'binary', '/tmp/blue_screen.elf', '/tmp/blue_screen.bin'])
+
 with open('/tmp/blue_screen.bin', 'rb') as f:
     bs_bin = f.read()
 
-bs_off = 0x474000
+bs_off = 0xb09100
 buf[bs_off:bs_off+len(bs_bin)] = bs_bin
 
-bs_handler_va = 0xfffffe0007478000 + 0x68
-bs_panic_va = 0xfffffe0007478000
+def branch_insn(from_va, to_va):
+    diff = to_va - from_va
+    imm26 = (diff >> 2) & 0x3ffffff
+    return 0x14000000 | imm26
 
-# Hook LowResetVector (0x473000):
-struct.pack_into('<I', buf, 0x473000, branch_insn(0xfffffe0007477000, bs_handler_va))
-struct.pack_into('<I', buf, 0x473080, branch_insn(0xfffffe0007477080, bs_handler_va))
-struct.pack_into('<I', buf, 0x473180, branch_insn(0xfffffe0007477180, bs_handler_va))
-struct.pack_into('<I', buf, 0x473200, branch_insn(0xfffffe0007477200, bs_handler_va))
-struct.pack_into('<I', buf, 0x473280, branch_insn(0xfffffe0007477280, bs_handler_va))
-struct.pack_into('<I', buf, 0x473380, branch_insn(0xfffffe0007477380, bs_handler_va))
-
-# Hook HighResetVector (0x478000 - the ACTIVE VBAR_EL1!):
-struct.pack_into('<I', buf, 0x478000, branch_insn(0xfffffe000747c000, bs_handler_va))
-struct.pack_into('<I', buf, 0x478080, branch_insn(0xfffffe000747c080, bs_handler_va))
-struct.pack_into('<I', buf, 0x478180, branch_insn(0xfffffe000747c180, bs_handler_va))
-struct.pack_into('<I', buf, 0x478200, branch_insn(0xfffffe000747c200, bs_handler_va))
-struct.pack_into('<I', buf, 0x478280, branch_insn(0xfffffe000747c280, bs_handler_va))
-struct.pack_into('<I', buf, 0x478380, branch_insn(0xfffffe000747c380, bs_handler_va))
+bs_panic_va = 0xfffffe0007b0d100
 
 # Hook _panic (foff: 0xa75348) -> blue_screen_panic_msg
 struct.pack_into('<I', buf, 0xa75348, branch_insn(0xfffffe0007a79348, bs_panic_va))
+print('Hooked _panic at 0xa75348 -> blue_screen_panic_msg in clean padding (0xb09100)!')
 
 # =========================================================================
 # 12. INJECT 35 STEP TRACERS (1..Z) INTO FREE PADDING AT 0x472700
