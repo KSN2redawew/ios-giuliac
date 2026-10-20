@@ -11,7 +11,7 @@ struct.pack_into('<Q', buf, tcr_off, 0x226516a519)
 
 # 2. start.s bootstrap TTBR1 L1 mapping: map L2 table into BOTH TTBR0 [x3] and TTBR1 [x3, #0x4000]!
 l1_off = 0x47921c
-l1_patch = bytes.fromhex('6b0080d2 4c8c7492 6c010caa 6c0000f9 6c8000f9 6c0020f9 1f2003d5 1f2003d5')
+l1_patch = bytes.fromhex('6b0080d2 4c8c7492 6c010caa 6c0000f9 6c8000f9 6c801ff9 1f2003d5 1f2003d5')
 buf[l1_off:l1_off+len(l1_patch)] = l1_patch
 
 # 3. start.s framebuffer bootstrap mapping (32MB blocks at 0xd4000000 and 0xd6000000)
@@ -52,8 +52,8 @@ for s, off in enumerate(stripe_loop_offsets):
     patch_loc = off - 16
     buf[patch_loc:patch_loc+16] = patch
 
-# 5. Injected TTBR1-aware early_putc at 0x4704f4
-with open('/tmp/p_ttbr1.bin', 'rb') as f:
+# 5. Injected physical-framebuffer early_putc at 0x4704f4
+with open('/tmp/p.bin', 'rb') as f:
     putc_bin = f.read()
 buf[0x4704f4:0x4704f4+len(putc_bin)] = putc_bin
 
@@ -93,13 +93,12 @@ for line in nm_out.splitlines():
     if len(parts) >= 3 and parts[1].upper() == 'T':
         symbols[parts[2]] = int(parts[0], 16)
 
-# 10. Hook 0x46f620 -> run_tlbi_probe
-run_tlbi_probe_va = symbols['run_tlbi_probe']
-struct.pack_into('<I', buf, 0x46f620, branch_insn(0xfffffe0007473620, run_tlbi_probe_va))
-print(f"Hooked 0x46f620 -> run_tlbi_probe ({hex(run_tlbi_probe_va)})")
+# 10. NOP out switch of TTBR0 to invalid_ttep (foff: 0x46f634)
+struct.pack_into('<I', buf, 0x46f634, 0xd503201f)
+print("NOPed 0x46f634 (set_ttbr0) -> TTBR0 stays active on x25 across arm_vm_init!")
 
-# 11. INJECT TTBR1-AWARE BLUE SCREEN HANDLER AT 0x474000
-with open('/tmp/bs_ttbr1.bin', 'rb') as f:
+# 11. INJECT BLUE SCREEN HANDLER AT 0x474000
+with open('/tmp/blue_screen.bin', 'rb') as f:
     bs_bin = f.read()
 
 bs_off = 0x474000
