@@ -194,7 +194,7 @@ wrap_9:
 
     // 4. Link Level 2 table into invalid_ttep[0]
     ldr     x8, [x23]
-    mov     x12, #0x2910
+    mov     x12, #0x3910
     movk    x12, #0x0717, lsl #16
     movk    x12, #0xfe00, lsl #32
     movk    x12, #0xffff, lsl #48
