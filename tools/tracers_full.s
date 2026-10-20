@@ -650,28 +650,13 @@ wrap_Z:
 
 
 
-.global probe_box_magenta
-probe_box_magenta:
-    mov     x0, #0x0000
-    movk    x0, #0xd510, lsl #16
-    mov     x1, #0x2f00
-    movk    x1, #0x76, lsl #16 // row 1540 * 5056 = 0x762f00
-    add     x0, x0, x1
-    mov     w1, #0x00ff
-    movk    w1, #0xff00, lsl #16 // MAGENTA
-    mov     x2, #63200
-1:  str     w1, [x0], #4
-    subs    x2, x2, #1
-    b.ne    1b
-    dsb     sy
-    ret
 
 .global probe_box_yellow
 probe_box_yellow:
     mov     x0, #0x0000
     movk    x0, #0xd510, lsl #16
-    mov     x1, #0x7000
-    movk    x1, #0x7b, lsl #16 // row 1600 * 5056 = 0x7b7000
+    mov     x1, #0x0300
+    movk    x1, #0xa2, lsl #16 // row 2100 * 5056 = 0xa20300
     add     x0, x0, x1
     mov     w1, #0xff00
     movk    w1, #0xffff, lsl #16 // YELLOW
@@ -686,8 +671,8 @@ probe_box_yellow:
 probe_box_cyan:
     mov     x0, #0x0000
     movk    x0, #0xd510, lsl #16
-    mov     x1, #0x1100
-    movk    x1, #0x80, lsl #16 // row 1660 * 5056 = 0x801100
+    mov     x1, #0xba00
+    movk    x1, #0xa9, lsl #16 // row 2200 * 5056 = 0xa9ba00
     add     x0, x0, x1
     mov     w1, #0xffff
     movk    w1, #0x00ff, lsl #16 // CYAN
@@ -702,8 +687,8 @@ probe_box_cyan:
 probe_box_green:
     mov     x0, #0x0000
     movk    x0, #0xd510, lsl #16
-    mov     x1, #0xb200
-    movk    x1, #0x84, lsl #16 // row 1720 * 5056 = 0x84b200
+    mov     x1, #0x7100
+    movk    x1, #0xb1, lsl #16 // row 2300 * 5056 = 0xb17100
     add     x0, x0, x1
     mov     w1, #0x0000
     movk    w1, #0x00ff, lsl #16 // GREEN
@@ -718,11 +703,27 @@ probe_box_green:
 probe_box_white:
     mov     x0, #0x0000
     movk    x0, #0xd510, lsl #16
-    mov     x1, #0x5300
-    movk    x1, #0x89, lsl #16 // row 1780 * 5056 = 0x895300
+    mov     x1, #0x2800
+    movk    x1, #0xb9, lsl #16 // row 2400 * 5056 = 0xb92800
     add     x0, x0, x1
     mov     w1, #0xffff
     movk    w1, #0xffff, lsl #16 // WHITE
+    mov     x2, #63200
+1:  str     w1, [x0], #4
+    subs    x2, x2, #1
+    b.ne    1b
+    dsb     sy
+    ret
+
+.global probe_box_blue
+probe_box_blue:
+    mov     x0, #0x0000
+    movk    x0, #0xd510, lsl #16
+    mov     x1, #0xdf00
+    movk    x1, #0xc0, lsl #16 // row 2500 * 5056 = 0xc0df00
+    add     x0, x0, x1
+    mov     w1, #0x00ff
+    movk    w1, #0x0000, lsl #16 // BLUE
     mov     x2, #63200
 1:  str     w1, [x0], #4
     subs    x2, x2, #1
@@ -735,9 +736,6 @@ run_tlbi_probe:
     stp     x29, x30, [sp, #-16]!
     mov     x29, sp
 
-    // 0. Thick Magenta Stripe: run_tlbi_probe ENTERED!
-    bl      probe_box_magenta
-
     // 1. Call dodge_early_disable
     mov     x16, #0x4b84
     movk    x16, #0x0747, lsl #16
@@ -745,7 +743,7 @@ run_tlbi_probe:
     movk    x16, #0xffff, lsl #48
     blr     x16
 
-    // 2. Thick Yellow Stripe: dodge_early_disable returned!
+    // 2. Row 2100: YELLOW (dodge_early_disable returned!)
     bl      probe_box_yellow
 
     // 3. Load invalid_ttep physical address from [0xfffffe0007173918]
@@ -756,7 +754,7 @@ run_tlbi_probe:
     ldr     x8, [x22]
     and     x0, x8, #0xffffffffffff
 
-    // 4. Thick Cyan Stripe: invalid_ttep address loaded!
+    // 4. Row 2200: CYAN (invalid_ttep address loaded!)
     bl      probe_box_cyan
 
     // 5. Call set_ttbr0(invalid_ttep)
@@ -766,7 +764,7 @@ run_tlbi_probe:
     movk    x16, #0xffff, lsl #48
     blr     x16
 
-    // 6. Thick Green Stripe: set_ttbr0 returned!
+    // 6. Row 2300: GREEN (set_ttbr0 completed!)
     bl      probe_box_green
 
     // 7. Flush local TLB
@@ -774,7 +772,7 @@ run_tlbi_probe:
     dsb     sy
     isb
 
-    // 8. Thick White Stripe: tlbi finished!
+    // 8. Row 2400: WHITE (tlbi completed!)
     bl      probe_box_white
 
     // 9. Restore arm_vm_init registers
@@ -786,7 +784,10 @@ run_tlbi_probe:
     str     w9, [x8, #56]
     ldr     x0, [x23]
 
-    // 10. Jump to 0xfffffe0007473654
+    // 10. Row 2500: BLUE (ready to jump to wrap_N!)
+    bl      probe_box_blue
+
+    // 11. Jump to 0xfffffe0007473654
     mov     x16, #0x3654
     movk    x16, #0x0747, lsl #16
     movk    x16, #0xfe00, lsl #32
