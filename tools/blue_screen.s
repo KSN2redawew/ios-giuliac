@@ -3,7 +3,12 @@
 .global blue_screen_panic_msg
 
 blue_screen_panic_msg:
-    mov     x19, x0
+    mov     x19, x0       // fmt or msg
+    mov     x20, x1       // arg1 (reason string if panic_display_saved_state)
+    mov     x21, x2       // arg2 (faulting PC)
+    mov     x22, x3       // arg3 (faulting LR)
+    mov     x23, x4       // arg4 (saved_state pointer)
+    mov     x24, x30      // caller of _panic
 
     // 1. Fill entire framebuffer with BLUE (0xff0000ff)
     mov     x1, #0x0000
@@ -29,12 +34,75 @@ clr_p_fb:
     bl      print_str
 
     cbz     x19, p_hang
+
+    // Check if format string starts with "%s" (panic_display_saved_state)
+    ldrb    w0, [x19]
+    cmp     w0, #0x25     // '%'
+    b.ne    p_plain_str
+    ldrb    w0, [x19, #1]
+    cmp     w0, #0x73     // 's'
+    b.ne    p_plain_str
+
+    // Decode panic_display_saved_state arguments:
+    cbz     x20, 1f
+    mov     x0, x20       // print reason string
+    bl      print_str
+    mov     w0, #10
+    bl      call_putc
+1:
+    adr     x0, str_pc
+    bl      print_str
+    mov     x0, x21       // faulting PC
+    bl      print_hex
+    mov     w0, #10
+    bl      call_putc
+
+    adr     x0, str_lr
+    bl      print_str
+    mov     x0, x22       // faulting LR
+    bl      print_hex
+    mov     w0, #10
+    bl      call_putc
+
+    cbz     x23, 2f
+    adr     x0, str_esr
+    bl      print_str
+    ldr     w0, [x23, #288] // ESR
+    bl      print_hex
+    mov     w0, #10
+    bl      call_putc
+
+    adr     x0, str_far
+    bl      print_str
+    ldr     x0, [x23, #280] // FAR
+    bl      print_hex
+    mov     w0, #10
+    bl      call_putc
+2:
+    adr     x0, str_caller
+    bl      print_str
+    mov     x0, x24       // caller of _panic
+    bl      print_hex
+    mov     w0, #10
+    bl      call_putc
+    b       p_hang
+
+p_plain_str:
     mov     x23, x19
 p_str_loop:
     ldrb    w0, [x23], #1
-    cbz     w0, p_hang
+    cbz     w0, 3f
     bl      call_putc
     b       p_str_loop
+3:
+    mov     w0, #10
+    bl      call_putc
+    adr     x0, str_caller
+    bl      print_str
+    mov     x0, x24
+    bl      print_hex
+    mov     w0, #10
+    bl      call_putc
 
 p_hang:
     wfe
@@ -156,6 +224,10 @@ str_panic_hdr:
     .asciz  "PANIC\n\n"
 str_panic_sync:
     .asciz  "PANIC SYNC\n\n"
+str_pc:
+    .asciz  "PC   "
+str_caller:
+    .asciz  "CALL "
 str_esr:
     .asciz  "ESR  "
 str_elr:
