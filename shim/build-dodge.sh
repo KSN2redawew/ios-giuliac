@@ -33,10 +33,21 @@ size=$(llvm-nm "$OUT/shim.elf" | awk '$3=="_end"{print strtonum("0x"$1)}')
 truncate -s "$size" "$OUT/Image"
 cp "$PAYLOAD" "$OUT/ramdisk.bin"
 
-# Boot-image offsets: starting from dipa's SM7150 values (relocatable shim, so
-# low-risk). Adjust if the OP13 ABL rejects the image. fastboot boot is RAM-only.
+# Two candidate images — the OP13 ABL honors the header's load addresses (unlike
+# the reference device, which ignored them), so they must point at real, free DRAM.
+#
+# (A) header v2 with explicit addresses inside the OP13 DRAM bank at 0xa3e80000
+#     (size 0x14180000, carve-out free per the memory node + reserved-memory):
+#       FDT/tags 0xa4000000, kernel 0xa4400000, ramdisk 0xa5000000, dtb 0xa6000000
+#     All clear of each other and of XNU's destination (0xbe360000).
 mkbootimg --header_version 2 --kernel "$OUT/Image" --ramdisk "$OUT/ramdisk.bin" \
-	--dtb "$DTB" --base 0 --kernel_offset 0x8000 --ramdisk_offset 0x1000000 \
-	--tags_offset 0x100 --dtb_offset 0x1f00000 --pagesize 4096 \
-	--cmdline "console=null" -o "$OUT/dodge-boot.img"
-ls -l "$OUT/Image" "$OUT/dodge-boot.img"
+	--dtb "$DTB" --base 0xa4000000 --tags_offset 0x0 --kernel_offset 0x400000 \
+	--ramdisk_offset 0x1000000 --dtb_offset 0x2000000 --pagesize 4096 \
+	--cmdline "console=null" -o "$OUT/dodge-boot-v2.img"
+
+# (B) header v4 — OP13's native format. v4 stores NO load addresses and no dtb, so
+#     ABL uses its own known-good ones and its own device tree. Nothing to guess.
+mkbootimg --header_version 4 --kernel "$OUT/Image" --ramdisk "$OUT/ramdisk.bin" \
+	--cmdline "console=null" -o "$OUT/dodge-boot-v4.img"
+
+ls -l "$OUT/Image" "$OUT/dodge-boot-v2.img" "$OUT/dodge-boot-v4.img"

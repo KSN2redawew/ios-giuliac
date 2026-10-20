@@ -10,8 +10,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import adt  # noqa: E402
 
 # Kernel-managed RAM: above every Qualcomm XPU carve-out (see NOTES.md)
-PHYS_BASE = 0xb0000000
-MEM_SIZE = 0x4d000000
+# dodge: XNU-managed RAM must be a real DRAM bank with NO reserved-memory
+# carve-out inside it (start.s maps physBase..physBase+memSize as cacheable
+# blocks; a cacheable mapping over a Qualcomm XPU carve-out faults). Verified
+# against the OP13 memory node + reserved-memory: the bank at 0xbe360000
+# (size 0x16ac3000, ends 0xd4e23000) is carve-out free, and it is inside the
+# shim's low-8GB identity map. sweet's 0xb0000000/0x4d000000 is NOT usable here
+# (it spans xbl_ramdump, gunyah_hyp_region1, tz_merged, oem_vm and the splash fb).
+PHYS_BASE = 0xbe360000
+MEM_SIZE = 0x16000000
 # --highmem (phone only): the whole upper DDR bank. The live FDT memory node is
 # <0x80000000 2G>, <0x1_00000000 0xfcc00000>; every fixed reserved-memory
 # carve-out is in the low bank and the dynamic pools are limited below 4G.
