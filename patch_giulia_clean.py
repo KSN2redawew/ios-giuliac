@@ -75,8 +75,14 @@ struct.pack_into('<I', buf, 0xa4c4dc, 0x17e89006)
 # Replace 'orr x22, x0, #0x2000000000' with 'mov x22, x0' (0xaa0003f6)
 struct.pack_into('<I', buf, 0x46f4c8, 0xaa0003f6)
 
-# 10. NOP out set_mmu_ttb(invalid_ttep) call in arm_vm_init (foff: 0x46f634)
-struct.pack_into('<I', buf, 0x46f634, 0xd503201f)
+def branch_insn(from_va, to_va):
+    diff = to_va - from_va
+    imm26 = (diff >> 2) & 0x3ffffff
+    return 0x14000000 | imm26
+
+# 10. Hook 0x46f620 -> run_tlbi_probe (switches to mapped invalid_ttep and tests tlbi)
+run_tlbi_probe_va = 0xfffffe0007476f48
+struct.pack_into('<I', buf, 0x46f620, branch_insn(0xfffffe0007473620, run_tlbi_probe_va))
 
 # 10.5 Skip AuxKC checks in arm_vm_init (foff: 0x46f6c8) -> b 0x46f890
 struct.pack_into('<I', buf, 0x46f6c8, 0x14000072)
