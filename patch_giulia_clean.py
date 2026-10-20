@@ -123,6 +123,11 @@ struct.pack_into('<I', buf, 0x4713d8, 0xd503201f) # nop (ml_phys_read_data timeo
 struct.pack_into('<I', buf, 0x471768, 0xd503201f) # nop (ml_phys_write_data timeout panic)
 print('NOPed 0x4713d8 and 0x471768 -> bypassed ml_phys latency watchdog panics!')
 
+# 10.4 Bypass "Invalid kernel stack pointer" panic during early boot:
+# At 0x474008, jump directly to 0x4740b4 (normal exception entry without stack check)
+struct.pack_into('<I', buf, 0x474008, 0x1400002b) # b 0x4740b4
+print('Patched 0x474008 -> b 0x4740b4 (bypassed bootstrap stack check panic!)')
+
 # 11. INJECT BLUE SCREEN HANDLER INTO FREE PADDING AT 0xb09100 (VA 0xfffffe0007b0d100)
 subprocess.check_call(['aarch64-linux-gnu-as', 'tools/blue_screen.s', '-o', '/tmp/blue_screen.o'], cwd='/home/ksn/ios-giuluac')
 subprocess.check_call(['aarch64-linux-gnu-ld', '--section-start=.text=0xfffffe0007b0d100', '/tmp/blue_screen.o', '-o', '/tmp/blue_screen.elf'], cwd='/home/ksn/ios-giuluac')
