@@ -1,0 +1,221 @@
+From c832be6245007b33e012b21fb32631f0412d7a28 Mon Sep 17 00:00:00 2001
+From: palazik <gochmyradov0@gmail.com>
+Date: Tue, 20 Oct 2026 21:23:12 +0500
+Subject: [PATCH 26/27] dodge: built-in AMFI interface that grants no
+ entitlements
+
+Port of dipa-studio/ios-sweet 0025 (credit: dipa-studio).
+
+Code signing calls into the AMFI interface on every exec, and on Apple
+platforms AppleMobileFileIntegrity registers it, backed by the closed
+CoreEntitlements library. dodge has neither, so register a provider that
+honestly reports no entitlements: blobs get no OSEntitlements object
+(csb_entitlements stays NULL, which the kernel already handles), every
+query is denied and every copy returns nothing. Nothing is granted, and
+signature and page-hash validation stay with the kernel.
+
+The TrustCache interface is left at version 0 - trust caches are
+unavailable without Image4 - and the few entry points no dodge kernel
+path reaches panic with a clear message rather than being NULL.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ bsd/conf/files        |   1 +
+ bsd/kern/dodge_amfi.c | 176 ++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 177 insertions(+)
+ create mode 100644 bsd/kern/dodge_amfi.c
+
+diff --git a/bsd/conf/files b/bsd/conf/files
+index 68d2e4e..47464b1 100644
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -381,6 +381,7 @@ bsd/kern/kern_core.c			optional config_coredump
+ bsd/kern/kern_credential.c		standard
+ bsd/kern/kern_crossarch.c		standard
+ bsd/kern/kern_cs.c			standard
++bsd/kern/dodge_amfi.c			standard
+ bsd/kern/kern_csr.c			optional config_csr
+ bsd/kern/kern_debug.c			standard
+ bsd/kern/kern_symfile.c			standard
+diff --git a/bsd/kern/dodge_amfi.c b/bsd/kern/dodge_amfi.c
+new file mode 100644
+index 0000000..9a87939
+--- /dev/null
++++ b/bsd/kern/dodge_amfi.c
+@@ -0,0 +1,176 @@
++/*
++ * Built-in AMFI interface for DODGE.
++ *
++ * On Apple platforms AppleMobileFileIntegrity registers this interface and
++ * provides entitlements through the closed CoreEntitlements library. DODGE
++ * has neither, and code signing reaches it on every exec (ubc_cs_blob_add).
++ *
++ * This provider honestly reports that no entitlements exist: code signature
++ * blobs get no OSEntitlements object (csb_entitlements stays NULL, which the
++ * kernel already handles), every entitlement query fails and every copy
++ * returns nothing. Nothing is granted. Code signature and page hash
++ * validation stay with the kernel. Trust caches remain unavailable (no
++ * Image4), so the TrustCache interface is left at version 0.
++ *
++ * Interfaces no kernel path uses on DODGE (they serve other Apple kexts)
++ * panic with a clear message instead of being NULL.
++ */
++#if defined(ARM64_BOARD_CONFIG_DODGE)
++#include <kern/debug.h>
++#include <kern/startup.h>
++#include <libkern/amfi/amfi.h>
++#include <mach/kern_return.h>
++#include <sys/proc.h>
++#include <sys/systm.h>
++
++static void
++dodge_amfi_entitlements_invalidate(__unused void *os_entitlements)
++{
++	/* No OSEntitlements objects are ever created. */
++}
++
++static void *
++dodge_amfi_entitlements_as_dict(__unused void *os_entitlements)
++{
++	return NULL;
++}
++
++static CEError_t
++dodge_amfi_entitlements_query(__unused void *os_entitlements,
++    __unused uint8_t cdhash[CS_CDHASH_LEN], __unused CEQuery_t query,
++    __unused size_t query_length)
++{
++	panic("DODGE AMFI: CoreEntitlements queries are not implemented");
++}
++
++static bool
++dodge_amfi_entitlements_get_transmuted(__unused void *os_entitlements,
++    __unused const CS_GenericBlob **blob)
++{
++	return false;
++}
++
++static bool
++dodge_amfi_entitlements_get_xml(__unused void *os_entitlements,
++    __unused CS_GenericBlob **blob)
++{
++	return false;
++}
++
++static bool
++dodge_amfi_get_legacy_profile_exemptions(__unused const uint8_t **profile,
++    __unused size_t *profile_length)
++{
++	return false;
++}
++
++static bool
++dodge_amfi_get_udid(__unused const uint8_t **udid, __unused size_t *udid_length)
++{
++	return false;
++}
++
++static void *
++dodge_amfi_query_context_to_object(__unused CEQueryContext_t ctx)
++{
++	panic("DODGE AMFI: CoreEntitlements query contexts are not implemented");
++}
++
++static kern_return_t
++dodge_amfi_adjust_with_monitor(__unused void *os_entitlements,
++    __unused const CEQueryContext_t ce_ctx, __unused const void *monitor_sig_obj,
++    __unused const char *identity, __unused const uint32_t code_signing_flags)
++{
++	/* DODGE has no code signing monitor. */
++	return KERN_NOT_SUPPORTED;
++}
++
++static kern_return_t
++dodge_amfi_adjust_without_monitor(__unused void *os_entitlements,
++    __unused struct cs_blob *code_signing_blob)
++{
++	/* Leave the blob without an entitlements context: it has none. */
++	return KERN_SUCCESS;
++}
++
++static kern_return_t
++dodge_amfi_query_boolean(__unused const void *os_entitlements,
++    __unused const char *entitlement_name)
++{
++	return KERN_DENIED;
++}
++
++static kern_return_t
++dodge_amfi_query_boolean_with_proc(__unused const proc_t proc,
++    __unused const char *entitlement_name)
++{
++	return KERN_DENIED;
++}
++
++static kern_return_t
++dodge_amfi_query_string(__unused const void *os_entitlements,
++    __unused const char *entitlement_name, __unused const char *entitlement_value)
++{
++	return KERN_DENIED;
++}
++
++static kern_return_t
++dodge_amfi_query_string_with_proc(__unused const proc_t proc,
++    __unused const char *entitlement_name, __unused const char *entitlement_value)
++{
++	return KERN_DENIED;
++}
++
++static kern_return_t
++dodge_amfi_copy_object(__unused const void *os_entitlements,
++    __unused const char *entitlement_name, void **entitlement_object)
++{
++	if (entitlement_object) {
++		*entitlement_object = NULL;
++	}
++	return KERN_NOT_FOUND;
++}
++
++static kern_return_t
++dodge_amfi_copy_object_with_proc(__unused const proc_t proc,
++    __unused const char *entitlement_name, void **entitlement_object)
++{
++	if (entitlement_object) {
++		*entitlement_object = NULL;
++	}
++	return KERN_NOT_FOUND;
++}
++
++static const amfi_t dodge_amfi = {
++	.OSEntitlements_invalidate = dodge_amfi_entitlements_invalidate,
++	.OSEntitlements_asdict = dodge_amfi_entitlements_as_dict,
++	.OSEntitlements_query = dodge_amfi_entitlements_query,
++	.OSEntitlements_get_transmuted = dodge_amfi_entitlements_get_transmuted,
++	.OSEntitlements_get_xml = dodge_amfi_entitlements_get_xml,
++	/* CoreEntitlements is only used by the PMAP_CS code signing monitor. */
++	.get_legacy_profile_exemptions = dodge_amfi_get_legacy_profile_exemptions,
++	.get_udid = dodge_amfi_get_udid,
++	.query_context_to_object = dodge_amfi_query_context_to_object,
++	/* .TrustCache stays version 0: trust caches are unavailable without Image4. */
++	.OSEntitlements = {
++		.version = OSENTITLEMENTS_INTERFACE_VERSION,
++		.adjustContextWithMonitor = dodge_amfi_adjust_with_monitor,
++		.adjustContextWithoutMonitor = dodge_amfi_adjust_without_monitor,
++		.queryEntitlementBoolean = dodge_amfi_query_boolean,
++		.queryEntitlementBooleanWithProc = dodge_amfi_query_boolean_with_proc,
++		.queryEntitlementString = dodge_amfi_query_string,
++		.queryEntitlementStringWithProc = dodge_amfi_query_string_with_proc,
++		.copyEntitlementAsOSObject = dodge_amfi_copy_object,
++		.copyEntitlementAsOSObjectWithProc = dodge_amfi_copy_object_with_proc,
++	},
++};
++
++__startup_func
++static void
++dodge_amfi_register(void)
++{
++	amfi_interface_register(&dodge_amfi);
++	printf("DODGE AMFI: built-in interface registered (no entitlements)\n");
++}
++STARTUP(EARLY_BOOT, STARTUP_RANK_MIDDLE, dodge_amfi_register);
++#endif /* ARM64_BOARD_CONFIG_DODGE */
