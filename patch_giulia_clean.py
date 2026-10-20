@@ -1,6 +1,7 @@
 import struct
+import subprocess
 
-print("=== Patching Giulia Kernel: Preserve Shim TTBR0 & Full 35 Tracers ===")
+print("=== Patching Giulia Kernel: Dynamic Symbols & Perfect Mappings ===")
 with open('/home/ksn/ios-giuluac/kernel-in/kernel.development.dodge.new', 'rb') as f:
     buf = bytearray(f.read())
 
@@ -51,9 +52,6 @@ for s, off in enumerate(stripe_loop_offsets):
     patch_loc = off - 16
     buf[patch_loc:patch_loc+16] = patch
 
-# 4.5 Keep original 0x47935c
-# struct.pack_into('<I', buf, 0x47935c, 0xd503201f)
-
 # 5. Injected early_putc at 0x4704f4
 with open('/tmp/p.bin', 'rb') as f:
     putc_bin = f.read()
@@ -72,23 +70,33 @@ struct.pack_into('<Q', buf, 0x292c18, 0xfffffe00074744f4)
 struct.pack_into('<I', buf, 0xa4c4dc, 0x17e89006)
 
 # 9. Keep TTBR0 active by skipping TCR_EL1.EPD0 disable (foff: 0x46f4c8)
-# Replace 'orr x22, x0, #0x2000000000' with 'mov x22, x0' (0xaa0003f6)
 struct.pack_into('<I', buf, 0x46f4c8, 0xaa0003f6)
+
+# 9.5 Skip AuxKC checks in arm_vm_init (foff: 0x46f6c8) -> b 0x46f890
+struct.pack_into('<I', buf, 0x46f6c8, 0x14000072)
+
+# 9.6 NOP out unmapped dodge_early_disabled store (foff: 0x470ba4)
+struct.pack_into('<I', buf, 0x470ba4, 0xd503201f)
 
 def branch_insn(from_va, to_va):
     diff = to_va - from_va
     imm26 = (diff >> 2) & 0x3ffffff
     return 0x14000000 | imm26
 
-# 10. Hook 0x46f620 -> run_tlbi_probe (switches to mapped invalid_ttep and tests tlbi)
-run_tlbi_probe_va = 0xfffffe0007476f48
+# =========================================================================
+# READ DYNAMIC SYMBOLS FROM tracers_full.elf
+# =========================================================================
+nm_out = subprocess.check_output(['aarch64-linux-gnu-nm', '/tmp/tracers_full.elf']).decode()
+symbols = {}
+for line in nm_out.splitlines():
+    parts = line.split()
+    if len(parts) >= 3 and parts[1].upper() == 'T':
+        symbols[parts[2]] = int(parts[0], 16)
+
+# 10. Hook 0x46f620 -> run_tlbi_probe
+run_tlbi_probe_va = symbols['run_tlbi_probe']
 struct.pack_into('<I', buf, 0x46f620, branch_insn(0xfffffe0007473620, run_tlbi_probe_va))
-
-# 10.5 Skip AuxKC checks in arm_vm_init (foff: 0x46f6c8) -> b 0x46f890
-struct.pack_into('<I', buf, 0x46f6c8, 0x14000072)
-
-# 10.6 NOP out unmapped dodge_early_disabled store (foff: 0x470ba4)
-struct.pack_into('<I', buf, 0x470ba4, 0xd503201f)
+print(f"Hooked 0x46f620 -> run_tlbi_probe ({hex(run_tlbi_probe_va)})")
 
 # 11. INJECT BLUE SCREEN HANDLER AT 0x474000
 with open('/tmp/blue_screen.bin', 'rb') as f:
@@ -96,11 +104,6 @@ with open('/tmp/blue_screen.bin', 'rb') as f:
 
 bs_off = 0x474000
 buf[bs_off:bs_off+len(bs_bin)] = bs_bin
-
-def branch_insn(from_va, to_va):
-    diff = to_va - from_va
-    imm26 = (diff >> 2) & 0x3ffffff
-    return 0x14000000 | imm26
 
 bs_handler_va = 0xfffffe0007478000 + 0x68
 bs_panic_va = 0xfffffe0007478000
@@ -132,52 +135,51 @@ with open('/tmp/tracers_full.bin', 'rb') as f:
 
 tracers_off = 0x472700
 buf[tracers_off:tracers_off+len(tracers_bin)] = tracers_bin
-tracers_base_va = 0xfffffe0007476700
 
-wrap_symbols = [
-    (0x46eae8, '1', 0x48),
-    (0x46eb00, '2', 0x80),
-    (0x46eb44, '3', 0xb8),
-    (0x46eb90, '4', 0xf0),
-    (0x46ebc4, '5', 0x128),
-    (0x46ebe4, '6', 0x160),
-    (0x46ec18, '7', 0x198),
-    (0x46ec98, '8', 0x1d0),
-    (0x46ecc4, '9', 0x208),
-    (0x46ed2c, 'A', 0x240),
-    (0x46ed58, 'B', 0x278),
-    (0x46f45c, 'C', 0x2b0),
-    (0x46f488, 'D', 0x2e8),
-    (0x46f4c4, 'E', 0x320),
-    (0x46f4d8, 'F', 0x358),
-    (0x46f520, 'G', 0x390),
-    (0x46f534, 'H', 0x3c8),
-    (0x46f558, 'I', 0x400),
-    (0x46f584, 'J', 0x438),
-    (0x46f5cc, 'K', 0x470),
-    (0x46f618, 'L', 0x4a8),
-    (0x46f61c, 'M', 0x4e0),
-    (0x46f654, 'N', 0x518),
-    (0x46f668, 'O', 0x550),
-    (0x46f6e4, 'P', 0x588),
-    (0x46f798, 'Q', 0x5c0),
-    (0x46f7c8, 'R', 0x5f8),
-    (0x46f7f4, 'S', 0x630),
-    (0x46f81c, 'T', 0x668),
-    (0x46f970, 'U', 0x6a0),
-    (0x46f974, 'V', 0x6d8),
-    (0x46fbe0, 'W', 0x710),
-    (0x46fc1c, 'X', 0x748),
-    (0x46fc20, 'Y', 0x780),
-    (0xaa5ca0, 'Z', 0x7b8),
+call_sites = [
+    (0x46eae8, '1'),
+    (0x46eb00, '2'),
+    (0x46eb44, '3'),
+    (0x46eb90, '4'),
+    (0x46ebc4, '5'),
+    (0x46ebe4, '6'),
+    (0x46ec18, '7'),
+    (0x46ec98, '8'),
+    (0x46ecc4, '9'),
+    (0x46ed2c, 'A'),
+    (0x46ed58, 'B'),
+    (0x46f45c, 'C'),
+    (0x46f488, 'D'),
+    (0x46f4c4, 'E'),
+    (0x46f4d8, 'F'),
+    (0x46f520, 'G'),
+    (0x46f534, 'H'),
+    (0x46f558, 'I'),
+    (0x46f584, 'J'),
+    (0x46f5cc, 'K'),
+    (0x46f618, 'L'),
+    (0x46f61c, 'M'),
+    (0x46f654, 'N'),
+    (0x46f668, 'O'),
+    (0x46f6e4, 'P'),
+    (0x46f798, 'Q'),
+    (0x46f7c8, 'R'),
+    (0x46f7f4, 'S'),
+    (0x46f81c, 'T'),
+    (0x46f970, 'U'),
+    (0x46f974, 'V'),
+    (0x46fbe0, 'W'),
+    (0x46fc1c, 'X'),
+    (0x46fc20, 'Y'),
+    (0xaa5ca0, 'Z'),
 ]
 
-for call_fo, char, wrap_rel in wrap_symbols:
+for call_fo, char in call_sites:
     if call_fo < 0xaa0000:
         call_va = 0xfffffe00072d4000 + (call_fo - 0x2d0000)
     else:
         call_va = 0xfffffe0007004000 + (call_fo - 0x4000)
-    wrap_va = tracers_base_va + wrap_rel
+    wrap_va = symbols[f'wrap_{char}']
     insn = branch_insn(call_va, wrap_va)
     bl_insn = (insn & 0x03ffffff) | 0x94000000
     struct.pack_into('<I', buf, call_fo, bl_insn)
@@ -187,4 +189,4 @@ out_path = '/home/ksn/ios-giuluac/kernel.development.giulia'
 with open(out_path, 'wb') as f:
     f.write(buf)
 
-print(f'\nSUCCESS: Generated {out_path} ({len(buf)} bytes) preserving Shim TTBR0!')
+print(f'\nSUCCESS: Generated {out_path} ({len(buf)} bytes) with dynamic symbol resolution!')
