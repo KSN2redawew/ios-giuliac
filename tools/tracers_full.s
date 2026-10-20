@@ -675,6 +675,12 @@ run_tlbi_probe:
     mov     w0, #0x50 // 'P'
     bl      call_putc
 
+    // Restore required registers for arm_vm_init:
+    adrp    x8, 0x170000
+    mov     w9, #1
+    str     w9, [x8, #56]
+    ldr     x0, [x23] // load args->topOfKernelData
+
     mov     x16, #0x3654
     movk    x16, #0x0747, lsl #16
     movk    x16, #0xfe00, lsl #32
