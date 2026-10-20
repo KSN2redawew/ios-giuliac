@@ -1,0 +1,98 @@
+From e2b34ccfc3763da636442d8357fe6353597c6c71 Mon Sep 17 00:00:00 2001
+From: palazik <gochmyradov0@gmail.com>
+Date: Tue, 20 Oct 2026 21:17:33 +0500
+Subject: [PATCH] dodge: split the MMU-enable stripe, and move the stripes off
+ the text
+
+v9 drew 7 stripes: xnu now programs TCR, TTBR0, TTBR1 and MAIR and
+reaches the SCTLR_EL1 write, then dies the instant the MMU comes on.
+
+That single step hides two different failures, so split it. Stage 7 is
+drawn with the MMU switched back off, by the same physical store that
+already worked for stages 0-6, and answers only whether the core survived
+turning the MMU on. Stage 8 repeats it with the MMU back on, and answers
+whether the framebuffer block in the V=P bootstrap table translates. So 7
+stripes means the MMU settings are rejected, 8 means the framebuffer
+mapping is wrong, 9 means both are fine.
+
+Also start the stripes at row 1200 instead of row 0: at the top they
+painted over the shim's own text, which now has to stay readable in the
+same photo.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ osfmk/arm64/start.s | 40 ++++++++++++++++++++++++++++++++--------
+ 1 file changed, 32 insertions(+), 8 deletions(-)
+
+diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
+index 42dc196..589dcc2 100644
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -93,10 +93,11 @@
+  * DODGE_BAND <stage>
+  *
+  * Draw a full-width 32-row white stripe across the splash framebuffer at row
+- * <stage>*40, so boot progress can be read straight off the panel long before
+- * any console exists: the stripes stack down from the top and the number of
+- * them is the last point reached. Deliberately full width and at the top, so a
+- * marker cannot be missed in a photo (a small corner block was).
++ * DODGE_BAND_ROW0 + <stage>*40, so boot progress can be read straight off the
++ * panel long before any console exists: the stripes stack downward and the
++ * number of them is the last point reached. Deliberately full width so a
++ * marker cannot be missed in a photo (a small corner block was), and started
++ * well below the top so the shim's own text stays readable in the same photo.
+  *
+  * Stages:
+  *   0  start_first_cpu entered
+@@ -106,14 +107,16 @@
+  *   4  TTBR0 (V=P root) programmed
+  *   5  MAIR_EL1 programmed, TLB invalidated
+  *   6  about to enable the MMU
+- *   7  MMU on
++ *   7  MMU came on and we are still executing (drawn with it off again)
++ *   8  the same store, now going through the bootstrap tables
+  *
+  * Clobbers x0-x2 only, and uses no stack, so it is safe this early. Works with
+  * the MMU off (plain physical store) and with the bootstrap MMU on, because the
+  * framebuffer is identity-mapped by the block added after create_bootstrap_mapping.
+  */
++#define DODGE_BAND_ROW0 1200
+ .macro DODGE_BAND
+-	MOV64	x0, (0xfc800000 + $0 * 40 * 5760)
++	MOV64	x0, (0xfc800000 + (DODGE_BAND_ROW0 + $0 * 40) * 5760)
+ 	mov		w1, #-1
+ 	mov		x2, #(32 * 1440)
+ 8:
+@@ -834,9 +837,30 @@ common_start:
+ 	isb		sy
+ 
+ #if defined(DODGE)
+-	/* Stage 7: MMU is on. Reaching this also proves the framebuffer block in
+-	 * the bootstrap tables is correct, since this store now goes through it. */
++	/*
++	 * The board dies exactly here, so split the one question into two.
++	 *
++	 * Stage 7 is drawn with the MMU switched back off, by the same plain
++	 * physical store that already worked for stages 0-6, so it answers only
++	 * "did the core survive turning the MMU on?". Stage 8 is the identical
++	 * store with the MMU back on, so it answers "does the framebuffer block
++	 * in the V=P bootstrap table actually translate?".
++	 *
++	 * 7 stripes: enabling the MMU itself kills us (TCR/TTBR/granule).
++	 * 8 stripes: the MMU works, the framebuffer mapping does not.
++	 * 9 stripes: both are fine and the kernel dies further on.
++	 *
++	 * x3/x4 are free here; x0 is restored for the code below.
++	 */
++	mov		x3, x0
++	bic		x4, x0, #SCTLR_M_ENABLED
++	msr		SCTLR_EL1, x4
++	isb		sy
+ 	DODGE_BAND 7
++	msr		SCTLR_EL1, x3
++	isb		sy
++	DODGE_BAND 8
++	mov		x0, x3
+ #endif
+ 
+ #if !VMAPPLE && !defined(DODGE)

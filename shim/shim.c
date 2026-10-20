@@ -378,6 +378,31 @@ void shim_main(uint64_t dtb)
 	con_clear(RED);
 	con_str("SHIM", "dodge milestone 4: xnu loader");
 	con_skip();
+
+	/*
+	 * The two CPU facts that decide whether xnu's MMU settings can work at
+	 * all, printed before the handover because xnu dies the instant it sets
+	 * SCTLR_EL1.M:
+	 *   el    - the exception level ABL handed us. xnu programs the EL1
+	 *           translation regime; at EL2 with HCR_EL2.E2H those writes are
+	 *           redirected to EL2 registers instead.
+	 *   tg16  - ID_AA64MMFR0_EL1.TGran16. 0 means this core does NOT
+	 *           implement the 16K translation granule xnu is built for, so
+	 *           TCR_EL1.TG0/TG1 hold a reserved value and every translation
+	 *           faults the moment the MMU comes on.
+	 */
+	uint64_t cur_el, mmfr0;
+	__asm__ volatile ("mrs %0, CurrentEL" : "=r" (cur_el));
+	__asm__ volatile ("mrs %0, ID_AA64MMFR0_EL1" : "=r" (mmfr0));
+	con_hex2("CPU", "el=", (uint32_t)(cur_el >> 2),
+	    "tg16=", (uint32_t)((mmfr0 >> 20) & 0xf));
+	con_hex("MMFR0", mmfr0);
+	if ((cur_el >> 2) == 2) {
+		uint64_t hcr;
+		__asm__ volatile ("mrs %0, HCR_EL2" : "=r" (hcr));
+		con_hex("HCR_EL2", hcr);
+	}
+	con_skip();
 	const char *why = loader_boot(dtb);
 	con_str("LOADER", why);
 	con_skip();
