@@ -31,23 +31,18 @@ llvm-objcopy -O binary "$OUT/shim.elf" "$OUT/Image"
 # Pad to _end so .bss/stacks exist as zeroed bytes (ABL just copies the file).
 size=$(llvm-nm "$OUT/shim.elf" | awk '$3=="_end"{print strtonum("0x"$1)}')
 truncate -s "$size" "$OUT/Image"
-cp "$PAYLOAD" "$OUT/ramdisk.bin"
+# Append the payload directly after _end, so loader.c finds it self-relative.
+# Do NOT rely on the ramdisk: a GKI / header-v4 boot makes ABL build its own
+# initrd from vendor_boot+init_boot and drop ours (observed on the OP13 as
+# "no DODGEXNU payload" with a 21 MB initrd that was not ours).
+cat "$PAYLOAD" >> "$OUT/Image"
+# Tiny empty ramdisk — some bootloaders dislike a zero-size one.
+(cd "$OUT" && rm -rf rd && mkdir rd && cd rd && find . | cpio -o -H newc --quiet | gzip -9 > ../ramdisk.bin)
 
-# Two candidate images — the OP13 ABL honors the header's load addresses (unlike
-# the reference device, which ignored them), so they must point at real, free DRAM.
-#
-# (A) header v2 with explicit addresses inside the OP13 DRAM bank at 0xa3e80000
-#     (size 0x14180000, carve-out free per the memory node + reserved-memory):
-#       FDT/tags 0xa4000000, kernel 0xa4400000, ramdisk 0xa5000000, dtb 0xa6000000
-#     All clear of each other and of XNU's destination (0xbe360000).
-mkbootimg --header_version 2 --kernel "$OUT/Image" --ramdisk "$OUT/ramdisk.bin" \
-	--dtb "$DTB" --base 0xa4000000 --tags_offset 0x0 --kernel_offset 0x400000 \
-	--ramdisk_offset 0x1000000 --dtb_offset 0x2000000 --pagesize 4096 \
-	--cmdline "console=null" -o "$OUT/dodge-boot-v2.img"
-
-# (B) header v4 — OP13's native format. v4 stores NO load addresses and no dtb, so
-#     ABL uses its own known-good ones and its own device tree. Nothing to guess.
+# header v4 — the OP13's native (Android 15 / GKI) format, confirmed booting on
+# device. v4 stores no load addresses and no dtb, so ABL uses its own known-good
+# ones and the device's own device tree; there is nothing left to guess.
 mkbootimg --header_version 4 --kernel "$OUT/Image" --ramdisk "$OUT/ramdisk.bin" \
-	--cmdline "console=null" -o "$OUT/dodge-boot-v4.img"
+	--cmdline "console=null" -o "$OUT/dodge-boot.img"
 
-ls -l "$OUT/Image" "$OUT/dodge-boot-v2.img" "$OUT/dodge-boot-v4.img"
+ls -l "$OUT/Image" "$OUT/dodge-boot.img"

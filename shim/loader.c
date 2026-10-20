@@ -85,10 +85,32 @@ const char *loader_boot(uintptr_t dtb)
 		return "no initrd in /chosen";
 	con_hex2("INITRD", "lo=", rd_start, "hi=", rd_end);
 
-	const struct payload *p = (const struct payload *)rd_start;
-	if (!magic_ok(p->magic))
-		return "no DODGEXNU payload";
-	if (p->version != 1 || (p->adt_off & 7) || (rd_start & 7))
+	/*
+	 * Primary: the payload is appended directly after this image, so it sits
+	 * at _end once ABL has copied the kernel blob. This is independent of how
+	 * (or whether) the bootloader hands us a ramdisk -- a GKI/header-v4 boot
+	 * builds its own initrd from vendor_boot+init_boot and can drop ours.
+	 * Fallback: scan the initrd, in case ours was concatenated after theirs.
+	 */
+	extern char _end[];
+	uintptr_t pbase = (uintptr_t)_end;
+
+	if (!magic_ok(((const struct payload *)pbase)->magic)) {
+		static const uint64_t want64 = 0x554e584547444f44ULL;	/* "DODGEXNU" */
+		pbase = 0;
+		for (uint64_t a = rd_start; a + sizeof(struct payload) <= rd_end; a += 8) {
+			if (*(volatile const uint64_t *)(uintptr_t)a == want64) {
+				pbase = (uintptr_t)a;
+				break;
+			}
+		}
+		if (!pbase)
+			return "no DODGEXNU payload";
+	}
+	con_hex("PAYLOAD", pbase);
+
+	const struct payload *p = (const struct payload *)pbase;
+	if (p->version != 1 || (p->adt_off & 7) || (pbase & 7))
 		return "bad payload header";
 
 	uint64_t pa_of_va_base = p->phys_base - p->virt_base;	/* pa = va + this */
