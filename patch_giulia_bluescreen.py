@@ -74,6 +74,12 @@ struct.pack_into('<I', buf, 0x46f620, 0xd503201f)
 # 10. NOP out set_mmu_ttb(invalid_ttep) call in arm_vm_init (foff: 0x46f634)
 struct.pack_into('<I', buf, 0x46f634, 0xd503201f)
 
+# 10.5 Keep TTBR0 active by not setting TCR_EL1.EPD0 (foff: 0x46f4c8)
+# Replace 'orr x22, x0, #0x2000000000' with 'mov x22, x0' (0xaa0003f6)
+struct.pack_into('<I', buf, 0x46f4c8, 0xaa0003f6)
+print('10.5 Kept TTBR0 identity map active by skipping TCR_EL1.EPD0!')
+
+
 # 11. INJECT BLUE SCREEN HANDLER AT 0x474000
 with open('/tmp/blue_screen.bin', 'rb') as f:
     bs_bin = f.read()
