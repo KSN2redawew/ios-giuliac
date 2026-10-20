@@ -143,12 +143,11 @@ void exc_handler(uint64_t slot, uint64_t *regs)
 		return;
 	}
 	con_clear(BLUE);
-	switch (slot & 3) {
-	case 0: con_str("PANIC", "SYNC"); break;
-	case 1: con_str("PANIC", "IRQ"); break;
-	case 2: con_str("PANIC", "FIQ"); break;
-	default: con_str("PANIC", "SERROR"); break;
-	}
+	/* Inline 2D array (not a pointer table) so clang keeps it position-
+	 * independent: the shim runs wherever ABL loads it, so no absolute
+	 * relocations are allowed (build-dodge.sh enforces ABS64 == 0). */
+	static const char exc_name[4][7] = { "SYNC", "IRQ", "FIQ", "SERROR" };
+	con_str("PANIC", exc_name[slot & 3]);
 	con_hex2("SLOT", "n=", slot, "cpu=", rsr("mpidr_el1"));
 	con_str("STAGE", stage);
 	con_hex("ESR", rsr("esr_el1"));

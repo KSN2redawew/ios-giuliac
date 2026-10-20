@@ -24,7 +24,7 @@ done
 abs=$(llvm-readelf -r "$OUT"/shim.o "$OUT"/console.o "$OUT"/mmu.o "$OUT"/fdt.o "$OUT"/loader.o "$OUT"/ufs.o 2>/dev/null | grep -c ABS64 || true)
 [ "$abs" = 0 ] || { echo "error: $abs absolute relocations in C objects" >&2; exit 1; }
 clang --target=$TARGET $CFLAGS -static -fuse-ld=lld -T shim.ld \
-	-Wl,--build-id=none -Wl,--no-warn-rwx-segments -Wl,-N \
+	-Wl,--build-id=none -Wl,-N \
 	"$OUT"/start.o "$OUT"/shim.o "$OUT"/console.o "$OUT"/mmu.o "$OUT"/fdt.o "$OUT"/loader.o "$OUT"/ufs.o \
 	-o "$OUT/shim.elf"
 llvm-objcopy -O binary "$OUT/shim.elf" "$OUT/Image"

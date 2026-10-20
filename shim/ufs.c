@@ -13,7 +13,19 @@
 #include "console.h"
 #include "ufs.h"
 
-#define UFS_BASE	0x01d84000UL	/* ufshc@1d84000, sweet live FDT */
+/* Freestanding strcmp: clang lowers __builtin_strcmp(runtime,"literal") to a
+ * call (gcc inlines it), so provide the symbol for the -nostdlib shim. */
+int
+strcmp(const char *a, const char *b)
+{
+	while (*a && *a == *b) {
+		a++;
+		b++;
+	}
+	return (int)(unsigned char)*a - (int)(unsigned char)*b;
+}
+
+#define UFS_BASE	0x01d84000UL	/* ufshc@1d84000 (OP13 same base, Qualcomm reuse) */
 
 #define REG_CAP		0x00
 #define REG_VER		0x08
