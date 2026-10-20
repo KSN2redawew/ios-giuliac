@@ -1,6 +1,6 @@
 import struct
 
-print("=== Patching Giulia Kernel with Full 35 Step Tracers (1..Z) & TTBR0 Preservation ===")
+print("=== Patching Giulia Kernel with Full 35 Step Tracers & HighResetVector Traps ===")
 with open('/home/ksn/ios-giuluac/kernel-in/kernel.development.dodge.new', 'rb') as f:
     buf = bytearray(f.read())
 
@@ -78,6 +78,10 @@ struct.pack_into('<I', buf, 0x46f634, 0xd503201f)
 # 10.5 Skip AuxKC checks in arm_vm_init (foff: 0x46f6c8) -> b 0x46f890
 struct.pack_into('<I', buf, 0x46f6c8, 0x14000072)
 
+# 10.6 NOP out unmapped dodge_early_disabled store (foff: 0x470ba4)
+# 'strb w8, [x9, #2856]' attempts to write to unmapped 0xfffffe0008095b28!
+struct.pack_into('<I', buf, 0x470ba4, 0xd503201f)
+
 # 11. INJECT BLUE SCREEN HANDLER AT 0x474000
 with open('/tmp/blue_screen.bin', 'rb') as f:
     bs_bin = f.read()
@@ -93,13 +97,21 @@ def branch_insn(from_va, to_va):
 bs_handler_va = 0xfffffe0007478000 + 0x68
 bs_panic_va = 0xfffffe0007478000
 
-# Hook exception vectors to blue_screen_handler:
+# Hook LowResetVector (0x473000):
 struct.pack_into('<I', buf, 0x473000, branch_insn(0xfffffe0007477000, bs_handler_va))
 struct.pack_into('<I', buf, 0x473080, branch_insn(0xfffffe0007477080, bs_handler_va))
 struct.pack_into('<I', buf, 0x473180, branch_insn(0xfffffe0007477180, bs_handler_va))
 struct.pack_into('<I', buf, 0x473200, branch_insn(0xfffffe0007477200, bs_handler_va))
 struct.pack_into('<I', buf, 0x473280, branch_insn(0xfffffe0007477280, bs_handler_va))
 struct.pack_into('<I', buf, 0x473380, branch_insn(0xfffffe0007477380, bs_handler_va))
+
+# Hook HighResetVector (0x478000 - the ACTIVE VBAR_EL1!):
+struct.pack_into('<I', buf, 0x478000, branch_insn(0xfffffe000747c000, bs_handler_va))
+struct.pack_into('<I', buf, 0x478080, branch_insn(0xfffffe000747c080, bs_handler_va))
+struct.pack_into('<I', buf, 0x478180, branch_insn(0xfffffe000747c180, bs_handler_va))
+struct.pack_into('<I', buf, 0x478200, branch_insn(0xfffffe000747c200, bs_handler_va))
+struct.pack_into('<I', buf, 0x478280, branch_insn(0xfffffe000747c280, bs_handler_va))
+struct.pack_into('<I', buf, 0x478380, branch_insn(0xfffffe000747c380, bs_handler_va))
 
 # Hook _panic (foff: 0xa75348) -> blue_screen_panic_msg
 struct.pack_into('<I', buf, 0xa75348, branch_insn(0xfffffe0007a79348, bs_panic_va))
@@ -114,7 +126,6 @@ tracers_off = 0x472700
 buf[tracers_off:tracers_off+len(tracers_bin)] = tracers_bin
 tracers_base_va = 0xfffffe0007476700
 
-# Wrap offsets from nm:
 wrap_symbols = [
     (0x46eae8, '1', 0x48),
     (0x46eb00, '2', 0x80),
@@ -168,4 +179,4 @@ out_path = '/home/ksn/ios-giuluac/kernel.development.giulia'
 with open(out_path, 'wb') as f:
     f.write(buf)
 
-print(f'\nSUCCESS: Generated {out_path} ({len(buf)} bytes) with 35 CLEAN TRACERS at 0x472700!')
+print(f'\nSUCCESS: Generated {out_path} ({len(buf)} bytes) with HighResetVector & Clean Tracers!')
