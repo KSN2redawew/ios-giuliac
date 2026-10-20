@@ -5,14 +5,29 @@ SpringBoard home screen on sweet / Redmi Note 10 Pro, SM7150). Their full bring-
 log is `NOTES-sweet-upstream.md` — READ IT; it is the step-by-step recipe. Copy no
 code (no license); write our own, credit dipa.
 
-## Agent handoff / active work (2026-10-19)
+## Agent handoff / active work (2026-10-20)
 
-**STATE: 🎉 KERNEL BUILDS. `kernel.development.dodge` Mach-O produced by CI (build 8,
-run 39264404384, SHA 5bfcdc1, all steps success). Artifacts: xnu-kernel (~54 MB) +
-xnu-buildtree (~21 MB). Patches 0001-0006. Next = verify the Mach-O (arm64, not
-arm64e) then boot bring-up (QEMU first, then phone).**
+**STATE: 🎉 FULL KERNEL FOUNDATION BUILDS — dodge patches 0001-0016 all green on CI.**
+`kernel.development.dodge` is a plain-arm64 (no PAC) NOUNDEFS|PIE Mach-O. Foundation =
+board cfg + open-build fixes (0001-0006), fb console (0007), physmap (0008), kmem-RNG
+(0009), HMAC-PRNG (0010), trust-cache (0011), DodgePlatformExpert (0012), GICv3 Group-1
+vtimer IRQ (0013), DodgeCPU boot-CPU (0014), built-in libpthread (0015), BearSSL AES (0016).
+CI auto-triggers on push to dodge/patches/**; ccache warm.
+
+**NEXT = QEMU RUNTIME VALIDATION before the userland tail.** Everything is compile-only
+so far. With platform-expert + Group-1 IRQ + boot-CPU in place the kernel should now reach
+the scheduler/console. Run the dodge qemu-dodge.py flow (docs/QEMU_TESTING.md; needs
+research/ipsw-x/d22ap.adt from the iPhone X IPSW). THEN port dipa's userland tail (0021+:
+UFS root [+ topaz 0088 gpt-watchdog], HFS, AMFI, HID, IOSurface/IOMFB, SMP/PSCI)
+incrementally, validating each against that boot — do NOT blind-port ~60 patches.
+Also pending: early-fb-debug (dipa 0010/0012) once the loader framebuffer geometry is known.
 
 PORTING PROGRESS (reuse+adapt dipa/topaz, credited):
+- 0008 physmap alignment; 0009 kmem RNG (SplitMix64); 0010 HMAC-SHA256 PRNG; 0011 trust-cache
+  unavailable-runtime; 0012 DodgePlatformExpert; 0013 GICv3 Group-1 NS vtimer IRQ (TrustZone owns
+  Group 0 -> timer/IPIs as IRQ via sleh_irq/ICC_IAR1; DODGE.h GIC macros, EOIMODE fix); 0014 DodgeCPU
+  (single-core IOCPU, SGI1 self-test); 0015 built-in libpthread (staging .sh + provider); 0016 BearSSL AES
+  (staging .sh + dodge_aes*.c). vtimer INTID 27 verified from DTS.
 - 0007 framebuffer console DONE (build 9 run 39290737491 SUCCESS) = dipa 0003 ported: SERIAL_DODGE_FBCON,
   kprintf drawn on the panel via ADT node "dodge-fbcon" (reg/width/height/stride from the loader). OP13
   has no kernel UART, so the panel is the debug channel.
