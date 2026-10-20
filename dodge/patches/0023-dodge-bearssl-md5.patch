@@ -1,0 +1,164 @@
+From 87e560b2143d03fe39e7837e613af50d43833f39 Mon Sep 17 00:00:00 2001
+From: palazik <gochmyradov0@gmail.com>
+Date: Tue, 20 Oct 2026 21:03:24 +0500
+Subject: [PATCH 23/23] dodge: portable MD5 (BearSSL) for the legacy hash API
+
+Port of dipa-studio/ios-sweet 0027 (credit: dipa-studio).
+
+MD5Init/Update/Final go through g_crypto_funcs->ccmd5_di, which only the
+corecrypto kext fills in, and XNU ships no built-in MD5. Back them with
+BearSSL's portable MD5, which 0016-stage-bearssl.sh already stages, and
+map MD5_CTX onto br_md5_context around each call: state[4] is br's val,
+buffer[64] is br's buf, and count[2] is br's byte counter via the
+existing getCount/setCount helpers.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ libkern/conf/Makefile.template  |  9 +++++
+ libkern/conf/files              |  3 ++
+ libkern/crypto/corecrypto_md5.c | 58 +++++++++++++++++++++++++++++++++
+ libkern/crypto/dodge_dec32le.c  |  4 +++
+ libkern/crypto/dodge_enc32le.c  |  4 +++
+ libkern/crypto/dodge_md5.c      |  4 +++
+ 6 files changed, 82 insertions(+)
+ create mode 100644 libkern/crypto/dodge_dec32le.c
+ create mode 100644 libkern/crypto/dodge_enc32le.c
+ create mode 100644 libkern/crypto/dodge_md5.c
+
+diff --git a/libkern/conf/Makefile.template b/libkern/conf/Makefile.template
+index 24661c4..d883e32 100644
+--- a/libkern/conf/Makefile.template
++++ b/libkern/conf/Makefile.template
+@@ -35,6 +35,15 @@ dodge_aes_ct_dec.o_CFLAGS_ADD += -mgeneral-regs-only
+ dodge_aes_ct_cbcenc.o_CFLAGS_ADD += -mgeneral-regs-only
+ dodge_aes_ct_cbcdec.o_CFLAGS_ADD += -mgeneral-regs-only
+ corecrypto_aes.o_CFLAGS_ADD += -mgeneral-regs-only
++# BearSSL MD5 behind the legacy MD5Init/Update/Final API (corecrypto_md5.c).
++dodge_md5.o_INCFLAGS = $(DODGE_AES_INC)
++dodge_dec32le.o_INCFLAGS = $(DODGE_AES_INC)
++dodge_enc32le.o_INCFLAGS = $(DODGE_AES_INC)
++corecrypto_md5.o_INCFLAGS = $(DODGE_AES_INC)
++dodge_md5.o_CFLAGS_ADD += -mgeneral-regs-only
++dodge_dec32le.o_CFLAGS_ADD += -mgeneral-regs-only
++dodge_enc32le.o_CFLAGS_ADD += -mgeneral-regs-only
++corecrypto_md5.o_CFLAGS_ADD += -mgeneral-regs-only
+ endif
+ 
+ # Runtime support functions don't interact well with LTO (9294679)
+diff --git a/libkern/conf/files b/libkern/conf/files
+index 7ed84e6..e23b70a 100644
+--- a/libkern/conf/files
++++ b/libkern/conf/files
+@@ -103,6 +103,9 @@ libkern/crypto/dodge_aes_ct_enc.c	optional crypto
+ libkern/crypto/dodge_aes_ct_dec.c	optional crypto
+ libkern/crypto/dodge_aes_ct_cbcenc.c	optional crypto
+ libkern/crypto/dodge_aes_ct_cbcdec.c	optional crypto
++libkern/crypto/dodge_md5.c	optional crypto
++libkern/crypto/dodge_dec32le.c	optional crypto
++libkern/crypto/dodge_enc32le.c	optional crypto
+ libkern/crypto/corecrypto_aesxts.c		optional crypto
+ libkern/crypto/corecrypto_rand.c		optional crypto
+ libkern/crypto/corecrypto_rsa.c		    optional crypto
+diff --git a/libkern/crypto/corecrypto_md5.c b/libkern/crypto/corecrypto_md5.c
+index 242dcdb..a3486da 100644
+--- a/libkern/crypto/corecrypto_md5.c
++++ b/libkern/crypto/corecrypto_md5.c
+@@ -17,6 +17,62 @@ setCount(MD5_CTX *ctx, uint64_t count)
+ }
+ 
+ /* Copy a ccdigest ctx into a legacy MD5 context */
++#if defined(ARM64_BOARD_CONFIG_DODGE)
++/*
++ * dodge has no corecrypto kext (g_crypto_funcs stays NULL). MD5 uses
++ * BearSSL's portable implementation (libkern/crypto/dodge_md5.c), with
++ * MD5_CTX carrying exactly its state: chaining value, byte count and the
++ * partial block, converted around each call like the corecrypto path does.
++ */
++#include "dodge_bearssl/inc/bearssl_hash.h"
++
++static void
++MD5ToBr(MD5_CTX *md5_ctx, br_md5_context *br_ctx)
++{
++	br_md5_init(br_ctx);
++	memcpy(br_ctx->val, md5_ctx->state, sizeof(br_ctx->val));
++	br_ctx->count = getCount(md5_ctx);
++	memcpy(br_ctx->buf, md5_ctx->buffer, sizeof(br_ctx->buf));
++}
++
++static void
++BrToMD5(const br_md5_context *br_ctx, MD5_CTX *md5_ctx)
++{
++	memcpy(md5_ctx->state, br_ctx->val, sizeof(md5_ctx->state));
++	setCount(md5_ctx, br_ctx->count);
++	memcpy(md5_ctx->buffer, br_ctx->buf, sizeof(md5_ctx->buffer));
++}
++
++void
++MD5Init(MD5_CTX *ctx)
++{
++	br_md5_context br_ctx;
++
++	br_md5_init(&br_ctx);
++	BrToMD5(&br_ctx, ctx);
++}
++
++void
++MD5Update(MD5_CTX *ctx, const void *data, unsigned int len)
++{
++	br_md5_context br_ctx;
++
++	MD5ToBr(ctx, &br_ctx);
++	br_md5_update(&br_ctx, data, len);
++	BrToMD5(&br_ctx, ctx);
++}
++
++void
++MD5Final(unsigned char digest[MD5_DIGEST_LENGTH], MD5_CTX *ctx)
++{
++	br_md5_context br_ctx;
++
++	MD5ToBr(ctx, &br_ctx);
++	br_md5_out(&br_ctx, digest);
++}
++
++#else /* !ARM64_BOARD_CONFIG_DODGE */
++
+ static void
+ DiToMD5(const struct ccdigest_info *di, struct ccdigest_ctx *di_ctx, MD5_CTX *md5_ctx)
+ {
+@@ -68,3 +124,5 @@ MD5Final(unsigned char digest[MD5_DIGEST_LENGTH], MD5_CTX *ctx)
+ 	MD5ToDi(di, ctx, di_ctx);
+ 	ccdigest_final(di, di_ctx, digest);
+ }
++
++#endif /* !ARM64_BOARD_CONFIG_DODGE */
+diff --git a/libkern/crypto/dodge_dec32le.c b/libkern/crypto/dodge_dec32le.c
+new file mode 100644
+index 0000000..7c5b8e2
+--- /dev/null
++++ b/libkern/crypto/dodge_dec32le.c
+@@ -0,0 +1,4 @@
++/* BearSSL sources are fetched at an immutable commit by 0016-stage-bearssl.sh. */
++#if defined(ARM64_BOARD_CONFIG_DODGE)
++#include "dodge_bearssl/src/codec/dec32le.c"
++#endif
+diff --git a/libkern/crypto/dodge_enc32le.c b/libkern/crypto/dodge_enc32le.c
+new file mode 100644
+index 0000000..4a5071d
+--- /dev/null
++++ b/libkern/crypto/dodge_enc32le.c
+@@ -0,0 +1,4 @@
++/* BearSSL sources are fetched at an immutable commit by 0016-stage-bearssl.sh. */
++#if defined(ARM64_BOARD_CONFIG_DODGE)
++#include "dodge_bearssl/src/codec/enc32le.c"
++#endif
+diff --git a/libkern/crypto/dodge_md5.c b/libkern/crypto/dodge_md5.c
+new file mode 100644
+index 0000000..6016050
+--- /dev/null
++++ b/libkern/crypto/dodge_md5.c
+@@ -0,0 +1,4 @@
++/* BearSSL sources are fetched at an immutable commit by 0016-stage-bearssl.sh. */
++#if defined(ARM64_BOARD_CONFIG_DODGE)
++#include "dodge_bearssl/src/hash/md5.c"
++#endif
