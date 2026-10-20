@@ -144,3 +144,22 @@ jobs:
           name: xnu-kernel
           path: out/
           if-no-files-found: warn
+
+      # The full xnu-kernel artifact also carries kernel.development.*.link
+      # (a ~127 MB static archive) and the KDK nm dumps, so it is ~54 MB to
+      # download for a 16 MB kernel. Publish the Mach-O on its own as well:
+      # that is all the on-device iteration loop needs.
+      - name: Collect kernel Mach-O only
+        if: always()
+        run: |
+          mkdir -p kernel-only
+          cp dxb/fakeroot/System/Library/Kernels/kernel.development.* kernel-only/ 2>/dev/null || true
+          rm -rf kernel-only/*.link kernel-only/*.dSYM 2>/dev/null || true
+          ls -la kernel-only
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xnu-kernel-only
+          path: kernel-only/
+          if-no-files-found: warn
