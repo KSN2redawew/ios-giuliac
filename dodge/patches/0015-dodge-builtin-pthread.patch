@@ -1,0 +1,169 @@
+From 669cfc9c41690f86b828b341b4ef6cf49c8fb4a9 Mon Sep 17 00:00:00 2001
+From: palazik <gochmyradov0@gmail.com>
+Date: Tue, 20 Oct 2026 07:56:55 +0500
+Subject: [PATCH] dodge: built-in libpthread-514.100.2 provider (no pthread
+ kext)
+
+Port of dipa-studio/ios-sweet 0019. Standalone dodge has no libpthread kext, so
+build Apple's libpthread-514.100.2 (paired with xnu-8796.141.3) into the kernel:
+a staging script (dodge/patches/0015-stage-libpthread.sh) fetches the pinned
+commit into bsd/pthread/dodge_libpthread/ at build time; dodge_pthread_{init,
+support,synch}.c include its kern/*.c behind dodge_pthread_compat.h (kext header
+view), registering the provider at EARLY_BOOT. ksyn_waitq_element opaque grows to
+56 bytes for this libpthread; Makefile.template adds the include paths for DODGE.
+Gated on ARM64_BOARD_CONFIG_DODGE.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ bsd/conf/Makefile.template          |  9 +++++++++
+ bsd/conf/files                      |  3 +++
+ bsd/pthread/dodge_pthread_compat.h  | 25 +++++++++++++++++++++++++
+ bsd/pthread/dodge_pthread_init.c    | 26 ++++++++++++++++++++++++++
+ bsd/pthread/dodge_pthread_support.c |  5 +++++
+ bsd/pthread/dodge_pthread_synch.c   |  5 +++++
+ bsd/sys/pthread_internal.h          |  5 +++++
+ 7 files changed, 78 insertions(+)
+ create mode 100644 bsd/pthread/dodge_pthread_compat.h
+ create mode 100644 bsd/pthread/dodge_pthread_init.c
+ create mode 100644 bsd/pthread/dodge_pthread_support.c
+ create mode 100644 bsd/pthread/dodge_pthread_synch.c
+
+diff --git a/bsd/conf/Makefile.template b/bsd/conf/Makefile.template
+index 4b83160..b5ce72c 100644
+--- a/bsd/conf/Makefile.template
++++ b/bsd/conf/Makefile.template
+@@ -44,6 +44,15 @@ CFLAGS+= -include meta_features.h -DDRIVER_PRIVATE \
+         -Warray-bounds-pointer-arithmetic
+ SFLAGS+= -include meta_features.h
+ 
++# This provider is built into DODGE; other boards use their normal kext.
++ifeq ($(CURRENT_MACHINE_CONFIG),DODGE)
++DODGE_PTHREAD_ROOT = $(SRCROOT)/bsd/pthread/dodge_libpthread
++DODGE_PTHREAD_INC = -I$(DODGE_PTHREAD_ROOT) -I$(DODGE_PTHREAD_ROOT)/private -I$(DODGE_PTHREAD_ROOT)/include
++dodge_pthread_init.o_INCFLAGS = $(DODGE_PTHREAD_INC)
++dodge_pthread_support.o_INCFLAGS = $(DODGE_PTHREAD_INC)
++dodge_pthread_synch.o_INCFLAGS = $(DODGE_PTHREAD_INC)
++endif
++
+ #
+ # Directories for mig generated files
+ #
+diff --git a/bsd/conf/files b/bsd/conf/files
+index 4427401..68d2e4e 100644
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -361,6 +361,9 @@ bsd/security/audit/audit_syscalls.c		standard
+ bsd/security/audit/audit_worker.c		optional config_audit
+ 
+ bsd/pthread/pthread_shims.c		standard
++bsd/pthread/dodge_pthread_init.c	standard
++bsd/pthread/dodge_pthread_support.c	standard
++bsd/pthread/dodge_pthread_synch.c	standard
+ bsd/pthread/pthread_priority.c		standard
+ bsd/pthread/pthread_workqueue.c		standard
+ 
+diff --git a/bsd/pthread/dodge_pthread_compat.h b/bsd/pthread/dodge_pthread_compat.h
+new file mode 100644
+index 0000000..76d6469
+--- /dev/null
++++ b/bsd/pthread/dodge_pthread_compat.h
+@@ -0,0 +1,25 @@
++/*
++ * Compile the matching libpthread provider with its kext view of BSD headers.
++ * It owns its full ksyn_waitq_element layout; the kernel's opaque counterpart
++ * reserves this layout. All communication with private BSD state uses callbacks.
++ */
++#ifndef DODGE_PTHREAD_COMPAT_H
++#define DODGE_PTHREAD_COMPAT_H
++#undef BSD_KERNEL_PRIVATE
++#undef XNU_KERNEL_PRIVATE
++#define __PTHREAD_EXPOSE_INTERNALS__ 1
++#define NEEDS_SCHED_CALL_T 1
++
++/* The seven-argument kext API forwards to the eight-argument kernel vm_fault. */
++#define vm_fault vm_fault_external
++
++/* Avoid collisions with the kernel side of the callback interface. */
++#define pthread_kern dodge_pthread_kern
++#define current_uthread dodge_pthread_current_uthread
++#define pthread_start dodge_pthread_start
++#define pthread_stop dodge_pthread_stop
++
++/* os/log passes &__dso_handle as the containing Mach-O image address. */
++extern void *dodge_pthread_log_image __asm("__mh_execute_header");
++#define __dso_handle dodge_pthread_log_image
++#endif
+diff --git a/bsd/pthread/dodge_pthread_init.c b/bsd/pthread/dodge_pthread_init.c
+new file mode 100644
+index 0000000..ef9f135
+--- /dev/null
++++ b/bsd/pthread/dodge_pthread_init.c
+@@ -0,0 +1,26 @@
++/* Built-in provider: Apple libpthread-514.100.2, paired with xnu-8796.141.3. */
++#if defined(ARM64_BOARD_CONFIG_DODGE)
++#include "dodge_pthread_compat.h"
++#include "dodge_libpthread/kern/kern_init.c"
++
++/* Keep the provider's full layout within the kernel's reserved storage. */
++_Static_assert(sizeof(struct ksyn_waitq_element) == 56,
++    "update DODGE ksyn storage in sys/pthread_internal.h");
++
++/* Restore the startup interface after compiling the provider's kext code. */
++#define XNU_KERNEL_PRIVATE 1
++#include <kern/startup.h>
++#include <pexpert/pexpert.h>
++
++__startup_func
++static void
++dodge_pthread_register(void)
++{
++    kern_return_t kr = dodge_pthread_start(NULL, NULL);
++    if (kr != KERN_SUCCESS || dodge_pthread_kern == NULL) {
++        panic("DODGE: pthread provider registration failed: %d", kr);
++    }
++    kprintf("DODGE pthread: libpthread-514.100.2 registered\n");
++}
++STARTUP(EARLY_BOOT, STARTUP_RANK_SECOND, dodge_pthread_register);
++#endif /* ARM64_BOARD_CONFIG_DODGE */
+diff --git a/bsd/pthread/dodge_pthread_support.c b/bsd/pthread/dodge_pthread_support.c
+new file mode 100644
+index 0000000..a578c52
+--- /dev/null
++++ b/bsd/pthread/dodge_pthread_support.c
+@@ -0,0 +1,5 @@
++/* Built-in provider: Apple libpthread-514.100.2, paired with xnu-8796.141.3. */
++#if defined(ARM64_BOARD_CONFIG_DODGE)
++#include "dodge_pthread_compat.h"
++#include "dodge_libpthread/kern/kern_support.c"
++#endif /* ARM64_BOARD_CONFIG_DODGE */
+diff --git a/bsd/pthread/dodge_pthread_synch.c b/bsd/pthread/dodge_pthread_synch.c
+new file mode 100644
+index 0000000..89c7609
+--- /dev/null
++++ b/bsd/pthread/dodge_pthread_synch.c
+@@ -0,0 +1,5 @@
++/* Built-in provider: Apple libpthread-514.100.2, paired with xnu-8796.141.3. */
++#if defined(ARM64_BOARD_CONFIG_DODGE)
++#include "dodge_pthread_compat.h"
++#include "dodge_libpthread/kern/kern_synch.c"
++#endif /* ARM64_BOARD_CONFIG_DODGE */
+diff --git a/bsd/sys/pthread_internal.h b/bsd/sys/pthread_internal.h
+index 42e23d8..9c4c82f 100644
+--- a/bsd/sys/pthread_internal.h
++++ b/bsd/sys/pthread_internal.h
+@@ -34,7 +34,12 @@
+ 
+ struct ksyn_waitq_element {
+ #if __LP64__
++	#if defined(ARM64_BOARD_CONFIG_DODGE)
++	/* libpthread-514.100.2 includes the trailing kwe_uth pointer. */
++	char opaque[56];
++#else
+ 	char opaque[48];
++#endif
+ #else
+ 	char opaque[32];
+ #endif
+-- 
+2.55.0
+
