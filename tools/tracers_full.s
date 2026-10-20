@@ -433,6 +433,21 @@ wrap_N:
     stp     x2, x3, [sp, #16]
     stp     x29, x30, [sp, #32]
     mov     x29, sp
+
+    // Draw CYAN stripe at row 2500
+    mov     x0, #0x0000
+    movk    x0, #0xd510, lsl #16
+    mov     x1, #0xdf00
+    movk    x1, #0xc0, lsl #16
+    add     x0, x0, x1
+    mov     w1, #0xffff
+    movk    w1, #0x00ff, lsl #16 // CYAN
+    mov     x2, #63200
+1:  str     w1, [x0], #4
+    subs    x2, x2, #1
+    b.ne    1b
+    dsb     sy
+
     mov     w0, #0x4e
     bl      vm_trace
     ldp     x29, x30, [sp, #32]
