@@ -167,16 +167,44 @@ wrap_9:
     stp     x2, x3, [sp, #16]
     stp     x29, x30, [sp, #32]
     mov     x29, sp
+
+    // 1. Print ' 9'
     mov     w0, #0x39
     bl      vm_trace
-    ldp     x29, x30, [sp, #32]
-    ldp     x2, x3, [sp, #16]
-    ldp     x0, x1, [sp], #48
+
+    // 2. Call bzero(x0, 0x4000)
+    ldp     x0, x1, [sp]
+    stp     x0, x30, [sp, #-16]!
     mov     x16, #0x9a00
     movk    x16, #0x7b0, lsl #16
     movk    x16, #0xfe00, lsl #32
     movk    x16, #0xffff, lsl #48
-    br      x16
+    blr     x16
+    ldp     x0, x30, [sp], #16
+
+    // 3. Map 32MB blocks 106 and 107 into Level 2 table (x0)
+    mov     x10, #0xd4000000
+    mov     x11, #0x60000000000000
+    movk    x11, #0x605
+    orr     x11, x11, x10
+    str     x11, [x0, #848]
+    mov     x14, #1
+    add     x14, x11, x14, lsl #25
+    str     x14, [x0, #856]
+
+    // 4. Link Level 2 table into invalid_ttep[0]
+    ldr     x8, [x23]
+    mov     x12, #0x2910
+    movk    x12, #0x0717, lsl #16
+    movk    x12, #0xfe00, lsl #32
+    movk    x12, #0xffff, lsl #48
+    ldr     x12, [x12]
+    str     x8, [x12]
+
+    ldp     x29, x30, [sp, #32]
+    ldp     x2, x3, [sp, #16]
+    ldp     x0, x1, [sp], #48
+    ret
 
 .global wrap_A
 wrap_A:

@@ -93,9 +93,8 @@ for line in nm_out.splitlines():
     if len(parts) >= 3 and parts[1].upper() == 'T':
         symbols[parts[2]] = int(parts[0], 16)
 
-# 10. NOP out switch of TTBR0 to invalid_ttep (foff: 0x46f634)
-struct.pack_into('<I', buf, 0x46f634, 0xd503201f)
-print("NOPed 0x46f634 (set_ttbr0) -> TTBR0 stays active on x25 across arm_vm_init!")
+# 10. Leave 0x46f634 (set_ttbr0) intact so TTBR0 is set to our Qualcomm-mapped invalid_ttep!
+print("0x46f634 (set_ttbr0) left intact -> switches to real DRAM invalid_ttep!")
 
 # 11. INJECT BLUE SCREEN HANDLER AT 0x474000
 with open('/tmp/blue_screen.bin', 'rb') as f:
