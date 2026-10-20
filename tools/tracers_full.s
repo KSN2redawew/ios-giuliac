@@ -192,14 +192,7 @@ wrap_9:
     add     x14, x11, x14, lsl #25
     str     x14, [x0, #856]
 
-    // 4. Link Level 2 table into invalid_ttep[0]
-    ldr     x8, [x23]
-    mov     x12, #0x3910
-    movk    x12, #0x0717, lsl #16
-    movk    x12, #0xfe00, lsl #32
-    movk    x12, #0xffff, lsl #48
-    ldr     x12, [x12]
-    str     x8, [x12]
+    // 4. Link Level 2 table into invalid_ttep skipped (TTBR0 stays alive)
 
     ldp     x29, x30, [sp, #32]
     ldp     x2, x3, [sp, #16]

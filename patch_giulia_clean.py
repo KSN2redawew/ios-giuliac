@@ -100,10 +100,22 @@ for line in nm_out.splitlines():
     if len(parts) >= 3 and parts[1].upper() == 'T':
         symbols[parts[2]] = int(parts[0], 16)
 
-# 10. Hook 0x46f620 -> run_tlbi_probe (hardware multi-color step probe)
-run_tlbi_probe_va = symbols['run_tlbi_probe']
-struct.pack_into('<I', buf, 0x46f620, branch_insn(0xfffffe0007473620, run_tlbi_probe_va))
-print(f"Hooked 0x46f620 -> run_tlbi_probe ({hex(run_tlbi_probe_va)})")
+# 10. Keep TTBR0 active across arm_vm_init by NOPing set_ttbr0 at 0x46f634
+struct.pack_into('<I', buf, 0x46f634, 0xd503201f) # nop
+print('NOPed 0x46f634 (set_ttbr0) -> TTBR0 stays active for framebuffer')
+
+# 10.1 Patch tlbi vmalle1is -> tlbi vmalle1 (non-shareable) to avoid DSU hang
+struct.pack_into('<I', buf, 0x46f638, 0xd508871f) # tlbi vmalle1
+struct.pack_into('<I', buf, 0x46f63c, 0xd5033f9f) # dsb sy
+struct.pack_into('<I', buf, 0x46f640, 0xd5033fdf) # isb
+print('Patched 0x46f638: tlbi vmalle1 + dsb sy + isb')
+
+# 10.2 Bypass segment contiguity panics in arm_vm_init:
+# 0x46f8f8: b.ne 0x46fc68 -> nop (bypass segDATACONSTB == segTEXTB + segSizeTEXT)
+struct.pack_into('<I', buf, 0x46f8f8, 0xd503201f) # nop
+# 0x46f914: b.ne 0x46fc6c -> nop (bypass segTEXTEXECB == segDATACONSTB + segSizeDATACONST)
+struct.pack_into('<I', buf, 0x46f914, 0xd503201f) # nop
+print('NOPed 0x46f8f8 and 0x46f914 -> bypassed segment contiguity panics!')
 
 # 11. INJECT BLUE SCREEN HANDLER AT 0x474000
 with open('/tmp/blue_screen.bin', 'rb') as f:
