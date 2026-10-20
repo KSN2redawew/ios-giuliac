@@ -100,10 +100,10 @@ for line in nm_out.splitlines():
     if len(parts) >= 3 and parts[1].upper() == 'T':
         symbols[parts[2]] = int(parts[0], 16)
 
-# 10. Change tlbi vmalle1is -> tlbi vmalle1 (non-shareable) to prevent DSU interconnect hang on sleeping secondary cores
-struct.pack_into('<I', buf, 0x46f638, 0xd508871f)
-struct.pack_into('<I', buf, 0x46f63c, 0xd5033f9f) # dsb sy
-print("Patched 0x46f638: tlbi vmalle1is -> tlbi vmalle1 (local core)")
+# 10. Hook 0x46f620 -> run_tlbi_probe (hardware multi-color step probe)
+run_tlbi_probe_va = symbols['run_tlbi_probe']
+struct.pack_into('<I', buf, 0x46f620, branch_insn(0xfffffe0007473620, run_tlbi_probe_va))
+print(f"Hooked 0x46f620 -> run_tlbi_probe ({hex(run_tlbi_probe_va)})")
 
 # 11. INJECT BLUE SCREEN HANDLER AT 0x474000
 with open('/tmp/blue_screen.bin', 'rb') as f:

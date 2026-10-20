@@ -648,3 +648,128 @@ wrap_Z:
     movk    x16, #0xffff, lsl #48
     br      x16
 
+
+.global probe_box_yellow
+probe_box_yellow:
+    mov     x0, #0x0000
+    movk    x0, #0xd510, lsl #16
+    mov     x1, #0x7800
+    movk    x1, #0x26, lsl #16 // row 500 * 5056 = 2528000 = 0x269300 -> let approx 0x260000
+    add     x0, x0, x1
+    mov     w1, #0xff00
+    movk    w1, #0xffff, lsl #16 // YELLOW
+    mov     x2, #2000
+1:  str     w1, [x0], #4
+    subs    x2, x2, #1
+    b.ne    1b
+    dsb     sy
+    ret
+
+.global probe_box_cyan
+probe_box_cyan:
+    mov     x0, #0x0000
+    movk    x0, #0xd510, lsl #16
+    mov     x1, #0x7800
+    movk    x1, #0x28, lsl #16
+    add     x0, x0, x1
+    mov     w1, #0xffff
+    movk    w1, #0x00ff, lsl #16 // CYAN
+    mov     x2, #2000
+1:  str     w1, [x0], #4
+    subs    x2, x2, #1
+    b.ne    1b
+    dsb     sy
+    ret
+
+.global probe_box_green
+probe_box_green:
+    mov     x0, #0x0000
+    movk    x0, #0xd510, lsl #16
+    mov     x1, #0x7800
+    movk    x1, #0x2a, lsl #16
+    add     x0, x0, x1
+    mov     w1, #0x0000
+    movk    w1, #0x00ff, lsl #16 // GREEN
+    mov     x2, #2000
+1:  str     w1, [x0], #4
+    subs    x2, x2, #1
+    b.ne    1b
+    dsb     sy
+    ret
+
+.global probe_box_white
+probe_box_white:
+    mov     x0, #0x0000
+    movk    x0, #0xd510, lsl #16
+    mov     x1, #0x7800
+    movk    x1, #0x2c, lsl #16
+    add     x0, x0, x1
+    mov     w1, #0xffff
+    movk    w1, #0xffff, lsl #16 // WHITE
+    mov     x2, #2000
+1:  str     w1, [x0], #4
+    subs    x2, x2, #1
+    b.ne    1b
+    dsb     sy
+    ret
+
+.global run_tlbi_probe
+run_tlbi_probe:
+    stp     x29, x30, [sp, #-16]!
+    mov     x29, sp
+
+    // 1. Call dodge_early_disable
+    mov     x16, #0x4b84
+    movk    x16, #0x0747, lsl #16
+    movk    x16, #0xfe00, lsl #32
+    movk    x16, #0xffff, lsl #48
+    blr     x16
+
+    // 2. Yellow box
+    bl      probe_box_yellow
+
+    // 3. Load invalid_ttep physical address from [0xfffffe0007173918]
+    mov     x22, #0x3918
+    movk    x22, #0x0717, lsl #16
+    movk    x22, #0xfe00, lsl #32
+    movk    x22, #0xffff, lsl #48
+    ldr     x8, [x22]
+    and     x0, x8, #0xffffffffffff
+
+    // 4. Cyan box
+    bl      probe_box_cyan
+
+    // 5. Call set_ttbr0(invalid_ttep)
+    mov     x16, #0x1864
+    movk    x16, #0x748, lsl #16
+    movk    x16, #0xfe00, lsl #32
+    movk    x16, #0xffff, lsl #48
+    blr     x16
+
+    // 6. Green box
+    bl      probe_box_green
+
+    // 7. Flush local TLB
+    tlbi    vmalle1
+    dsb     sy
+    isb
+
+    // 8. White box
+    bl      probe_box_white
+
+    // 9. Restore arm_vm_init registers
+    mov     x8, #0x4000
+    movk    x8, #0x0717, lsl #16
+    movk    x8, #0xfe00, lsl #32
+    movk    x8, #0xffff, lsl #48
+    mov     w9, #1
+    str     w9, [x8, #56]
+    ldr     x0, [x23]
+
+    // 10. Jump to 0xfffffe0007473654
+    mov     x16, #0x3654
+    movk    x16, #0x0747, lsl #16
+    movk    x16, #0xfe00, lsl #32
+    movk    x16, #0xffff, lsl #48
+    ldp     x29, x30, [sp], #16
+    br      x16
