@@ -104,11 +104,11 @@ for line in nm_out.splitlines():
 struct.pack_into('<I', buf, 0x46f634, 0xd503201f) # nop
 print('NOPed 0x46f634 (set_ttbr0) -> TTBR0 stays active for framebuffer')
 
-# 10.1 Patch tlbi vmalle1is -> tlbi vmalle1 (non-shareable) to avoid DSU hang
-struct.pack_into('<I', buf, 0x46f638, 0xd508871f) # tlbi vmalle1
-struct.pack_into('<I', buf, 0x46f63c, 0xd5033f9f) # dsb sy
-struct.pack_into('<I', buf, 0x46f640, 0xd5033fdf) # isb
-print('Patched 0x46f638: tlbi vmalle1 + dsb sy + isb')
+# 10.1 NOP out tlbi vmalle1is / dsb / isb (tlbi hangs on SM8650 while TTBR0 is active)
+struct.pack_into('<I', buf, 0x46f638, 0xd503201f) # nop tlbi
+struct.pack_into('<I', buf, 0x46f63c, 0xd503201f) # nop dsb
+struct.pack_into('<I', buf, 0x46f640, 0xd503201f) # nop isb
+print('NOPed 0x46f638..0x46f640: keep TLB cache intact across arm_vm_init')
 
 # 10.2 Bypass segment contiguity panics in arm_vm_init:
 # 0x46f8f8: b.ne 0x46fc68 -> nop (bypass segDATACONSTB == segTEXTB + segSizeTEXT)
