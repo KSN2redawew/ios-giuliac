@@ -9,7 +9,7 @@ arm_init's first marker, somewhere in start.s. The friend also reports no white
 bar, i.e. not even the stage-0 marker at start_first_cpu.
 
 Disassembly confirms the instrumentation itself is fine: the stage-0 band
-assembles correctly (x0 = 0xFD93A000 = fb + 3136*5760) and the VMAPPLE SCTLR
+assembles correctly (x0 = 0xFD93A000 = fb + 3136*5056) and the VMAPPLE SCTLR
 self-check (which ends in 'bne .', an infinite loop) is correctly skipped for
 DODGE -- so DODGE is defined in start.s. The old marker was just a 64x32 block in
 the very bottom-left corner, easy to miss in an angled photo.
@@ -51,9 +51,9 @@ index 46cf455..50c2c31 100644
 + * framebuffer is identity-mapped by the block added after create_bootstrap_mapping.
 + */
 +.macro DODGE_BAND
-+	MOV64	x0, (0xfc800000 + $0 * 40 * 5760)
++	MOV64	x0, (0xd5100000 + $0 * 40 * 5056)
 +	mov		w1, #-1
-+	mov		x2, #(32 * 1440)
++	mov		x2, #(32 * 1264)
 +8:
 +	str		w1, [x0], #4
 +	subs	x2, x2, #1
@@ -70,10 +70,10 @@ index 46cf455..50c2c31 100644
  
  #if defined(DODGE)
 -	/* Stage 0: white 64x32 band, no stack or page tables needed. */
--	MOV64	x0, (0xfc800000 + 3136 * 5760)
+-	MOV64	x0, (0xd5100000 + 2748 * 5056)
 -	mov		w1, #-1
 -	mov		x2, #32
--	mov		x4, #5760
+-	mov		x4, #5056
 -Ldodge_mark_row:
 -	mov		x3, #64
 -	mov		x5, x0

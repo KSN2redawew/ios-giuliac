@@ -4,8 +4,8 @@ Date: Tue, 20 Oct 2026 20:02:09 +0500
 Subject: [PATCH] dodge: early framebuffer debug markers (find where XNU dies
  before kprintf)
 
-Port of dipa-studio/ios-sweet 0010, with dodge's panel (fb 0xfc800000, 1440x3168,
-stride 5760) instead of sweet's.
+Port of dipa-studio/ios-sweet 0010, with dodge's panel (fb 0xd5100000, 1264x2780,
+stride 5056) instead of sweet's.
 
 On device the shim now hands over a correctly loaded kernel (VERIFY insn matched)
 but XNU produces no output at all and never clears the screen: it dies or hangs
@@ -144,10 +144,10 @@ index 0000000..d31253d
 +#include <stdint.h>
 +#include <kern/misc_protos.h>
 +
-+#define EARLY_FB ((volatile uint32_t *)(uintptr_t)0xfc800000)
-+#define EARLY_WIDTH 1440u
-+#define EARLY_HEIGHT 3168u
-+#define EARLY_STRIDE (5760u / 4)
++#define EARLY_FB ((volatile uint32_t *)(uintptr_t)0xd5100000)
++#define EARLY_WIDTH 1264u
++#define EARLY_HEIGHT 2780u
++#define EARLY_STRIDE (5056u / 4)
 +#define EARLY_SCALE 2u
 +#define EARLY_CELL_W (8u * EARLY_SCALE)
 +#define EARLY_CELL_H (16u * EARLY_SCALE)
@@ -300,10 +300,10 @@ index c33d316..46cf455 100644
  
 +#if defined(DODGE)
 +	/* Stage 0: white 64x32 band, no stack or page tables needed. */
-+	MOV64	x0, (0xfc800000 + 3136 * 5760)
++	MOV64	x0, (0xd5100000 + 2748 * 5056)
 +	mov		w1, #-1
 +	mov		x2, #32
-+	mov		x4, #5760
++	mov		x4, #5056
 +Ldodge_mark_row:
 +	mov		x3, #64
 +	mov		x5, x0
@@ -332,7 +332,7 @@ index c33d316..46cf455 100644
 +	 * DODGE uses 16K pages and all bring-up RAM is below 4GB, so the first
 +	 * V=P L2 page is bootstrap_pagetables + 2*PGBYTES.
 +	 */
-+	MOV64	x10, 0xfc800000
++	MOV64	x10, 0xd5100000
 +	MOV64	x11, (ARM_TTE_TYPE_BLOCK | ARM_TTE_VALID | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX)
 +	orr		x11, x11, x10
 +	and		x12, x10, #(ARM_TT_L2_INDEX_MASK)
