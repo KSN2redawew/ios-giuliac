@@ -78,11 +78,12 @@ typedef void (*xnu_entry_t)(uint64_t boot_args_pa);
 
 const char *loader_boot(uintptr_t dtb)
 {
-	uint64_t rd_start, rd_end;
+	uint64_t rd_start = 0, rd_end = 0;
 
+	/* Optional: the payload lives after _end, so an initrd is only a fallback. */
 	if (!fdt_chosen_u64(dtb, "linux,initrd-start", &rd_start) ||
 	    !fdt_chosen_u64(dtb, "linux,initrd-end", &rd_end))
-		return "no initrd in /chosen";
+		rd_start = rd_end = 0;
 	con_hex2("INITRD", "lo=", rd_start, "hi=", rd_end);
 
 	/*
@@ -118,14 +119,19 @@ const char *loader_boot(uintptr_t dtb)
 	con_hex("VIRT", p->virt_base);
 	con_hex("ENTRY", p->entry_va);
 
-	/* The payload must not overlap where the kernel goes. */
-	if (rd_end > p->phys_base && rd_start < p->phys_base + p->mem_size)
-		return "ramdisk overlaps kernel memory";
+	/*
+	 * The payload (our copy source) must not overlap where the kernel goes.
+	 * Check pbase, not the initrd: the payload is appended after _end now and
+	 * the bootloader's initrd is not ours at all.
+	 */
+	uint64_t payload_end = pbase + p->adt_off + p->adt_size;
+	if (payload_end > p->phys_base && pbase < p->phys_base + p->mem_size)
+		return "payload overlaps kernel memory";
 
 	for (uint32_t i = 0; i < p->nsegs; i++) {
 		const struct payload_seg *s = &p->segs[i];
 		uintptr_t dst = s->vmaddr + pa_of_va_base;
-		copy64(dst, rd_start + s->file_off, s->file_size);
+		copy64(dst, pbase + s->file_off, s->file_size);
 		if (s->vmsize > s->file_size)
 			zero64(dst + ((s->file_size + 7) & ~7UL), s->vmsize - ((s->file_size + 7) & ~7UL));
 	}
@@ -133,7 +139,7 @@ const char *loader_boot(uintptr_t dtb)
 
 	/* ADT, then boot_args, behind the kernel; everything below topOfKernelData is ours. */
 	uintptr_t adt_pa = p->kernel_end + pa_of_va_base;
-	copy64(adt_pa, rd_start + p->adt_off, p->adt_size);
+	copy64(adt_pa, pbase + p->adt_off, p->adt_size);
 	uintptr_t ba_pa = (adt_pa + p->adt_size + PAGE_16K - 1) & ~(PAGE_16K - 1);
 	uintptr_t top = ba_pa + PAGE_16K;
 
@@ -159,6 +165,12 @@ const char *loader_boot(uintptr_t dtb)
 	con_hex2("BOOTARG", "pa=", ba_pa, "top=", top);
 
 	uintptr_t entry_pa = p->entry_va + pa_of_va_base;
+	/*
+	 * Read back what we actually landed at the entry. If the copy source is
+	 * ever wrong again this shows garbage here instead of jumping into it and
+	 * dying with an opaque "undefined instruction" panic.
+	 */
+	con_hex2("VERIFY", "entry=", entry_pa, "insn=", *(volatile const uint32_t *)entry_pa);
 	con_hex("JUMP", entry_pa);
 	con_str("XNU", "jumping (fbcon clears screen)");
 
