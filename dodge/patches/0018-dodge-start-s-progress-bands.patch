@@ -1,0 +1,129 @@
+From 7fd1ba9b316f860f1f7060d2eb13265f572f9a19 Mon Sep 17 00:00:00 2001
+From: palazik <gochmyradov0@gmail.com>
+Date: Tue, 20 Oct 2026 20:34:00 +0500
+Subject: [PATCH] dodge: bisect start.s with full-width boot-progress stripes
+
+On device v7 showed the loader hand over a correct kernel (VERIFY insn matched)
+but produced no output and did not overwrite the shim's text, so XNU dies before
+arm_init's first marker, somewhere in start.s. The friend also reports no white
+bar, i.e. not even the stage-0 marker at start_first_cpu.
+
+Disassembly confirms the instrumentation itself is fine: the stage-0 band
+assembles correctly (x0 = 0xFD93A000 = fb + 3136*5760) and the VMAPPLE SCTLR
+self-check (which ends in 'bne .', an infinite loop) is correctly skipped for
+DODGE -- so DODGE is defined in start.s. The old marker was just a 64x32 block in
+the very bottom-left corner, easy to miss in an angled photo.
+
+Replace it with DODGE_BAND <stage>: a full-width 32-row stripe at row stage*40,
+stacking down from the top, so the markers cannot be missed and are simply
+counted. Clobbers x0-x2 only and needs no stack. Placed to bisect start.s:
+  0 reached start_first_cpu
+  1 bootstrap page tables built (including the framebuffer block)
+  2 about to enable the MMU
+  3 MMU on -- which also proves the framebuffer block is mapped correctly,
+    since that store now goes through the bootstrap tables
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ osfmk/arm64/start.s | 59 +++++++++++++++++++++++++++++++++------------
+ 1 file changed, 43 insertions(+), 16 deletions(-)
+
+diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
+index 46cf455..50c2c31 100644
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -88,6 +88,32 @@
+ #endif /* defined(KERNEL_INTEGRITY_KTRR) */
+ .endmacro
+ 
++#if defined(DODGE)
++/*
++ * DODGE_BAND <stage>
++ *
++ * Draw a full-width 32-row white stripe across the splash framebuffer at row
++ * <stage>*40, so boot progress can be read straight off the panel long before
++ * any console exists: the stripes stack down from the top and the number of
++ * them is the last point reached. Deliberately full width and at the top, so a
++ * marker cannot be missed in a photo (a small corner block was).
++ *
++ * Clobbers x0-x5 only, and uses no stack, so it is safe this early. Works with
++ * the MMU off (plain physical store) and with the bootstrap MMU on, because the
++ * framebuffer is identity-mapped by the block added after create_bootstrap_mapping.
++ */
++.macro DODGE_BAND
++	MOV64	x0, (0xfc800000 + $0 * 40 * 5760)
++	mov		w1, #-1
++	mov		x2, #(32 * 1440)
++8:
++	str		w1, [x0], #4
++	subs	x2, x2, #1
++	b.ne	8b
++	dsb		sy
++.endmacro
++#endif /* DODGE */
++
+ /*
+  * Checks the reset handler for global and CPU-specific reset-assist functions,
+  * then jumps to the reset handler with boot args and cpu data. This is copied
+@@ -464,22 +490,8 @@ LEXT(start_first_cpu)
+ 	mov		x21, #0
+ 
+ #if defined(DODGE)
+-	/* Stage 0: white 64x32 band, no stack or page tables needed. */
+-	MOV64	x0, (0xfc800000 + 3136 * 5760)
+-	mov		w1, #-1
+-	mov		x2, #32
+-	mov		x4, #5760
+-Ldodge_mark_row:
+-	mov		x3, #64
+-	mov		x5, x0
+-Ldodge_mark_pixel:
+-	str		w1, [x5], #4
+-	subs	x3, x3, #1
+-	b.ne	Ldodge_mark_pixel
+-	add		x0, x0, x4
+-	subs	x2, x2, #1
+-	b.ne	Ldodge_mark_row
+-	dsb		sy
++	/* Stage 0: reached start_first_cpu. No stack or page tables needed. */
++	DODGE_BAND 0
+ #endif
+ 
+ 	// Set low reset vector before attempting any loads
+@@ -648,6 +660,10 @@ Lkernelcache_base_found:
+ 	/* Ensure TTEs are visible */
+ 	dsb		ish
+ 
++#if defined(DODGE)
++	/* Stage 1: bootstrap page tables built (incl. the framebuffer block). */
++	DODGE_BAND 1
++#endif
+ 
+ 	b		common_start
+ 
+@@ -776,11 +792,22 @@ common_start:
+ 	PAC_INIT_KEY_STATE tmp=x0, tmp2=x1
+ #endif /* HAS_APPLE_PAC */
+ 
++#if defined(DODGE)
++	/* Stage 2: about to enable the MMU (TTBRs/TCR/MAIR already programmed). */
++	DODGE_BAND 2
++#endif
++
+ 	// Enable caches, MMU, ROP and JOP
+ 	MOV64   x0, SCTLR_EL1_DEFAULT
+ 	MSR_SCTLR_EL1_X0
+ 	isb		sy
+ 
++#if defined(DODGE)
++	/* Stage 3: MMU is on. Reaching this also proves the framebuffer block in
++	 * the bootstrap tables is correct, since this store now goes through it. */
++	DODGE_BAND 3
++#endif
++
+ #if !VMAPPLE && !defined(DODGE)
+ 	MOV64   x1, SCTLR_EL1_DEFAULT
+ 	cmp		x0, x1
+-- 
+2.55.0
+
