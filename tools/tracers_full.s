@@ -649,16 +649,33 @@ wrap_Z:
     br      x16
 
 
+
+.global probe_box_magenta
+probe_box_magenta:
+    mov     x0, #0x0000
+    movk    x0, #0xd510, lsl #16
+    mov     x1, #0x2f00
+    movk    x1, #0x76, lsl #16 // row 1540 * 5056 = 0x762f00
+    add     x0, x0, x1
+    mov     w1, #0x00ff
+    movk    w1, #0xff00, lsl #16 // MAGENTA
+    mov     x2, #63200
+1:  str     w1, [x0], #4
+    subs    x2, x2, #1
+    b.ne    1b
+    dsb     sy
+    ret
+
 .global probe_box_yellow
 probe_box_yellow:
     mov     x0, #0x0000
     movk    x0, #0xd510, lsl #16
-    mov     x1, #0x7800
-    movk    x1, #0x26, lsl #16 // row 500 * 5056 = 2528000 = 0x269300 -> let approx 0x260000
+    mov     x1, #0x7000
+    movk    x1, #0x7b, lsl #16 // row 1600 * 5056 = 0x7b7000
     add     x0, x0, x1
     mov     w1, #0xff00
     movk    w1, #0xffff, lsl #16 // YELLOW
-    mov     x2, #2000
+    mov     x2, #63200
 1:  str     w1, [x0], #4
     subs    x2, x2, #1
     b.ne    1b
@@ -669,12 +686,12 @@ probe_box_yellow:
 probe_box_cyan:
     mov     x0, #0x0000
     movk    x0, #0xd510, lsl #16
-    mov     x1, #0x7800
-    movk    x1, #0x28, lsl #16
+    mov     x1, #0x1100
+    movk    x1, #0x80, lsl #16 // row 1660 * 5056 = 0x801100
     add     x0, x0, x1
     mov     w1, #0xffff
     movk    w1, #0x00ff, lsl #16 // CYAN
-    mov     x2, #2000
+    mov     x2, #63200
 1:  str     w1, [x0], #4
     subs    x2, x2, #1
     b.ne    1b
@@ -685,12 +702,12 @@ probe_box_cyan:
 probe_box_green:
     mov     x0, #0x0000
     movk    x0, #0xd510, lsl #16
-    mov     x1, #0x7800
-    movk    x1, #0x2a, lsl #16
+    mov     x1, #0xb200
+    movk    x1, #0x84, lsl #16 // row 1720 * 5056 = 0x84b200
     add     x0, x0, x1
     mov     w1, #0x0000
     movk    w1, #0x00ff, lsl #16 // GREEN
-    mov     x2, #2000
+    mov     x2, #63200
 1:  str     w1, [x0], #4
     subs    x2, x2, #1
     b.ne    1b
@@ -701,12 +718,12 @@ probe_box_green:
 probe_box_white:
     mov     x0, #0x0000
     movk    x0, #0xd510, lsl #16
-    mov     x1, #0x7800
-    movk    x1, #0x2c, lsl #16
+    mov     x1, #0x5300
+    movk    x1, #0x89, lsl #16 // row 1780 * 5056 = 0x895300
     add     x0, x0, x1
     mov     w1, #0xffff
     movk    w1, #0xffff, lsl #16 // WHITE
-    mov     x2, #2000
+    mov     x2, #63200
 1:  str     w1, [x0], #4
     subs    x2, x2, #1
     b.ne    1b
@@ -718,6 +735,9 @@ run_tlbi_probe:
     stp     x29, x30, [sp, #-16]!
     mov     x29, sp
 
+    // 0. Thick Magenta Stripe: run_tlbi_probe ENTERED!
+    bl      probe_box_magenta
+
     // 1. Call dodge_early_disable
     mov     x16, #0x4b84
     movk    x16, #0x0747, lsl #16
@@ -725,7 +745,7 @@ run_tlbi_probe:
     movk    x16, #0xffff, lsl #48
     blr     x16
 
-    // 2. Yellow box
+    // 2. Thick Yellow Stripe: dodge_early_disable returned!
     bl      probe_box_yellow
 
     // 3. Load invalid_ttep physical address from [0xfffffe0007173918]
@@ -736,7 +756,7 @@ run_tlbi_probe:
     ldr     x8, [x22]
     and     x0, x8, #0xffffffffffff
 
-    // 4. Cyan box
+    // 4. Thick Cyan Stripe: invalid_ttep address loaded!
     bl      probe_box_cyan
 
     // 5. Call set_ttbr0(invalid_ttep)
@@ -746,7 +766,7 @@ run_tlbi_probe:
     movk    x16, #0xffff, lsl #48
     blr     x16
 
-    // 6. Green box
+    // 6. Thick Green Stripe: set_ttbr0 returned!
     bl      probe_box_green
 
     // 7. Flush local TLB
@@ -754,7 +774,7 @@ run_tlbi_probe:
     dsb     sy
     isb
 
-    // 8. White box
+    // 8. Thick White Stripe: tlbi finished!
     bl      probe_box_white
 
     // 9. Restore arm_vm_init registers
