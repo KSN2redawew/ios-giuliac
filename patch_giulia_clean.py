@@ -159,6 +159,7 @@ with open('/tmp/tracers_full.bin', 'rb') as f:
     tracers_bin = f.read()
 
 tracers_off = 0x472700
+assert len(tracers_bin) <= (0x473000 - tracers_off), f'tracers_bin {len(tracers_bin)} overflows into 0x473000!'
 buf[tracers_off:tracers_off+len(tracers_bin)] = tracers_bin
 
 call_sites = [
