@@ -33,7 +33,7 @@ GICR, GICR_SIZE = 0x16080000, 0x200000    # redistributor region (stride 0x40000
 FB, FB_SIZE = 0xfc800000, 0x2b00000       # ABL cont_splash_region (phone)
 DODGE_ECID = 0x444f444745000001  # 'DODGE' + 1, synthetic
 # phone framebuffer geometry: TODO set from the real Silicium GOP; 1080x2400 placeholder
-FB_W, FB_H, FB_STRIDE = 1264, 2772, 1264 * 4   # OP13 1.5K panel guess; match shim/console.h
+FB_W, FB_H, FB_STRIDE = 1440, 3168, 1440 * 4   # OP13 QHD+, confirmed on-device; match shim/console.h
 # Internal UFS host (ufshc@1d84000 "ufs_mem"; Qualcomm reuses this base across SoCs); QEMU has none
 UFS, UFS_SIZE = 0x01d84000, 0x3000
 TIMEBASE = 19200000
