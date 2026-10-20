@@ -1,0 +1,81 @@
+From 40b8ef9a8472b1ceb09f7b9d59f0cb8c96b41d20 Mon Sep 17 00:00:00 2001
+From: palazik <gochmyradov0@gmail.com>
+Date: Tue, 20 Oct 2026 21:02:45 +0500
+Subject: [PATCH 22/23] dodge: point the BearSSL wrappers at the right staging
+ script
+
+The wrappers were ported with upstream's script number; ours is
+0016-stage-bearssl.sh.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ libkern/crypto/dodge_aes.c           | 2 +-
+ libkern/crypto/dodge_aes_ct.c        | 2 +-
+ libkern/crypto/dodge_aes_ct_cbcdec.c | 2 +-
+ libkern/crypto/dodge_aes_ct_cbcenc.c | 2 +-
+ libkern/crypto/dodge_aes_ct_dec.c    | 2 +-
+ libkern/crypto/dodge_aes_ct_enc.c    | 2 +-
+ 6 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/libkern/crypto/dodge_aes.c b/libkern/crypto/dodge_aes.c
+index 5655808..0fe9619 100644
+--- a/libkern/crypto/dodge_aes.c
++++ b/libkern/crypto/dodge_aes.c
+@@ -1,6 +1,6 @@
+ /*
+  * DODGE legacy AES CBC/ECB provider backed by BearSSL's portable bitslice AES.
+- * Upstream sources and MIT license are staged by 0020-stage-bearssl.sh.
++ * Upstream sources and MIT license are staged by 0016-stage-bearssl.sh.
+  * No heap, SIMD or CPU crypto extension is needed. Contexts can be copied:
+  * their only pointer is the immutable BearSSL class descriptor.
+  */
+diff --git a/libkern/crypto/dodge_aes_ct.c b/libkern/crypto/dodge_aes_ct.c
+index 6a0d02c..e4dbee4 100644
+--- a/libkern/crypto/dodge_aes_ct.c
++++ b/libkern/crypto/dodge_aes_ct.c
+@@ -1,4 +1,4 @@
+-/* BearSSL sources are fetched at an immutable commit by 0020-stage-bearssl.sh. */
++/* BearSSL sources are fetched at an immutable commit by 0016-stage-bearssl.sh. */
+ #if defined(ARM64_BOARD_CONFIG_DODGE)
+ #include "dodge_bearssl/src/symcipher/aes_ct.c"
+ #endif
+diff --git a/libkern/crypto/dodge_aes_ct_cbcdec.c b/libkern/crypto/dodge_aes_ct_cbcdec.c
+index 4567521..3eb6c75 100644
+--- a/libkern/crypto/dodge_aes_ct_cbcdec.c
++++ b/libkern/crypto/dodge_aes_ct_cbcdec.c
+@@ -1,4 +1,4 @@
+-/* BearSSL sources are fetched at an immutable commit by 0020-stage-bearssl.sh. */
++/* BearSSL sources are fetched at an immutable commit by 0016-stage-bearssl.sh. */
+ #if defined(ARM64_BOARD_CONFIG_DODGE)
+ #include "dodge_bearssl/src/symcipher/aes_ct_cbcdec.c"
+ #endif
+diff --git a/libkern/crypto/dodge_aes_ct_cbcenc.c b/libkern/crypto/dodge_aes_ct_cbcenc.c
+index 85ca522..b43fc3c 100644
+--- a/libkern/crypto/dodge_aes_ct_cbcenc.c
++++ b/libkern/crypto/dodge_aes_ct_cbcenc.c
+@@ -1,4 +1,4 @@
+-/* BearSSL sources are fetched at an immutable commit by 0020-stage-bearssl.sh. */
++/* BearSSL sources are fetched at an immutable commit by 0016-stage-bearssl.sh. */
+ #if defined(ARM64_BOARD_CONFIG_DODGE)
+ #include "dodge_bearssl/src/symcipher/aes_ct_cbcenc.c"
+ #endif
+diff --git a/libkern/crypto/dodge_aes_ct_dec.c b/libkern/crypto/dodge_aes_ct_dec.c
+index e600acd..2fb2300 100644
+--- a/libkern/crypto/dodge_aes_ct_dec.c
++++ b/libkern/crypto/dodge_aes_ct_dec.c
+@@ -1,4 +1,4 @@
+-/* BearSSL sources are fetched at an immutable commit by 0020-stage-bearssl.sh. */
++/* BearSSL sources are fetched at an immutable commit by 0016-stage-bearssl.sh. */
+ #if defined(ARM64_BOARD_CONFIG_DODGE)
+ #include "dodge_bearssl/src/symcipher/aes_ct_dec.c"
+ #endif
+diff --git a/libkern/crypto/dodge_aes_ct_enc.c b/libkern/crypto/dodge_aes_ct_enc.c
+index 1919f56..0d0fcbd 100644
+--- a/libkern/crypto/dodge_aes_ct_enc.c
++++ b/libkern/crypto/dodge_aes_ct_enc.c
+@@ -1,4 +1,4 @@
+-/* BearSSL sources are fetched at an immutable commit by 0020-stage-bearssl.sh. */
++/* BearSSL sources are fetched at an immutable commit by 0016-stage-bearssl.sh. */
+ #if defined(ARM64_BOARD_CONFIG_DODGE)
+ #include "dodge_bearssl/src/symcipher/aes_ct_enc.c"
+ #endif
