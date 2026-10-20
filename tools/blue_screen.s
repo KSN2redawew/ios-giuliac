@@ -5,24 +5,11 @@
 blue_screen_panic_msg:
     mov     x19, x0
 
-    // 1. Fill entire framebuffer with BLUE (0xff0000ff)
-    mov     x1, #0x0000
-    movk    x1, #0xd510, lsl #16
-    mov     w2, #0x00ff
-    movk    w2, #0xff00, lsl #16
-    mov     x3, #0xa000
-    movk    x3, #0x35, lsl #16
-clr_p_fb:
-    str     w2, [x1], #4
-    subs    x3, x3, #1
-    b.ne    clr_p_fb
-    dsb     sy
-
-    // 2. Reset cursor
+    // Reset cursor to col 1, row 28
     mov     x1, #0x0000
     movk    x1, #0xd5f0, lsl #16
     mov     w2, #1
-    mov     w3, #1
+    mov     w3, #28
     stp     w2, w3, [x1]
 
     adr     x0, str_panic_hdr
@@ -41,29 +28,34 @@ p_hang:
     b       p_hang
 
 blue_screen_handler:
+    mov     x28, x30      // PRESERVE LR (caller of NULL!)
     mrs     x19, esr_el1
     mrs     x20, elr_el1
     mrs     x21, far_el1
     mrs     x22, spsr_el1
+    mov     x27, sp       // PRESERVE SP
 
-    // 1. Fill entire framebuffer with BLUE (0xff0000ff)
+    // Fill only bottom half (rows 1200..2700) with dark blue
     mov     x1, #0x0000
     movk    x1, #0xd510, lsl #16
+    mov     x4, #0x0000
+    movk    x4, #0x5c, lsl #16 // row 1200 offset = 1200 * 5056 = 0x5cb800 -> ~0x5c0000
+    add     x1, x1, x4
     mov     w2, #0x00ff
-    movk    w2, #0xff00, lsl #16
-    mov     x3, #0xa000
-    movk    x3, #0x35, lsl #16
+    movk    w2, #0x0000, lsl #16 // Dark blue
+    mov     x3, #0x0000
+    movk    x3, #0x20, lsl #16
 clr_fb:
     str     w2, [x1], #4
     subs    x3, x3, #1
     b.ne    clr_fb
     dsb     sy
 
-    // 2. Reset cursor
+    // Set cursor to column 1, row 25
     mov     x1, #0x0000
     movk    x1, #0xd5f0, lsl #16
     mov     w2, #1
-    mov     w3, #1
+    mov     w3, #25
     stp     w2, w3, [x1]
 
     adr     x0, str_panic_sync
@@ -79,6 +71,13 @@ clr_fb:
     adr     x0, str_elr
     bl      print_str
     mov     x0, x20
+    bl      print_hex
+    mov     w0, #10
+    bl      call_putc
+
+    adr     x0, str_lr
+    bl      print_str
+    mov     x0, x28
     bl      print_hex
     mov     w0, #10
     bl      call_putc
@@ -147,12 +146,14 @@ call_putc:
 str_panic_hdr:
     .asciz  "PANIC\n\n"
 str_panic_sync:
-    .asciz  "PANIC  SYNC\n\n"
+    .asciz  "PANIC SYNC\n\n"
 str_esr:
-    .asciz  "ESR    "
+    .asciz  "ESR  "
 str_elr:
-    .asciz  "ELR    "
+    .asciz  "ELR  "
+str_lr:
+    .asciz  "LR   "
 str_far:
-    .asciz  "FAR    "
+    .asciz  "FAR  "
 str_spsr:
-    .asciz  "SPSR   "
+    .asciz  "SPSR "
