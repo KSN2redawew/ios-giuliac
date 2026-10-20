@@ -51,9 +51,8 @@ for s, off in enumerate(stripe_loop_offsets):
     patch_loc = off - 16
     buf[patch_loc:patch_loc+16] = patch
 
-# 4.5 CRITICAL: DO NOT OVERWRITE SHIM'S TTBR0 TABLE IN start.s (foff: 0x47935c)!
-# NOP out 'bl 0x47d864' so ttbr0_el1 remains pointing to shim's permanent 8GB table in DRAM
-struct.pack_into('<I', buf, 0x47935c, 0xd503201f)
+# 4.5 Keep original 0x47935c
+# struct.pack_into('<I', buf, 0x47935c, 0xd503201f)
 
 # 5. Injected early_putc at 0x4704f4
 with open('/tmp/p.bin', 'rb') as f:
