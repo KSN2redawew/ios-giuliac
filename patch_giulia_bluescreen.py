@@ -1,6 +1,6 @@
 import struct
 
-print("=== Patching Giulia Kernel with Blue Screen Panic & Vector Hooks ===")
+print("=== Patching Giulia Kernel with Step Tracers & Blue Screen Capture ===")
 with open('/home/ksn/ios-giuluac/kernel-in/kernel.development.dodge.new', 'rb') as f:
     buf = bytearray(f.read())
 
@@ -74,53 +74,86 @@ struct.pack_into('<I', buf, 0x46f620, 0xd503201f)
 # 10. NOP out set_mmu_ttb(invalid_ttep) call in arm_vm_init (foff: 0x46f634)
 struct.pack_into('<I', buf, 0x46f634, 0xd503201f)
 
-# =========================================================================
-# 11. INJECT BLUE SCREEN HANDLER AT 0x4743ec (VA 0xfffffe00074783ec)
-# =========================================================================
+# 11. INJECT BLUE SCREEN HANDLER AT 0x474000
 with open('/tmp/blue_screen.bin', 'rb') as f:
     bs_bin = f.read()
 
-bs_off = 0x4743ec
+bs_off = 0x474000
 buf[bs_off:bs_off+len(bs_bin)] = bs_bin
-print(f"11. Injected Blue Screen Handler ({len(bs_bin)} bytes) at foff {hex(bs_off)}")
 
-# VA of blue_screen_handler (offset 0x68 in blue_screen.bin):
-# VA = 0xfffffe00074783ec + 0x68 = 0xfffffe0007478454
-# VA of blue_screen_panic_msg (offset 0x00 in blue_screen.bin):
-# VA = 0xfffffe00074783ec
-
-# 12. Hook LowResetVector Exception Table Entries:
-# All vectors in start.s now branch directly to blue_screen_handler!
 def branch_insn(from_va, to_va):
     diff = to_va - from_va
     imm26 = (diff >> 2) & 0x3ffffff
     return 0x14000000 | imm26
 
-bs_handler_va = 0xfffffe00074783ec + 0x68
-bs_panic_va = 0xfffffe00074783ec
+bs_handler_va = 0xfffffe0007478000 + 0x68
+bs_panic_va = 0xfffffe0007478000
 
-# Vectors in LowResetVector:
-# 0x473000 (VA 0xfffffe0007477000): SP0 Sync
+# Hook exception vectors:
 struct.pack_into('<I', buf, 0x473000, branch_insn(0xfffffe0007477000, bs_handler_va))
-# 0x473080 (VA 0xfffffe0007477080): SP0 IRQ
 struct.pack_into('<I', buf, 0x473080, branch_insn(0xfffffe0007477080, bs_handler_va))
-# 0x473180 (VA 0xfffffe0007477180): SP0 SError
 struct.pack_into('<I', buf, 0x473180, branch_insn(0xfffffe0007477180, bs_handler_va))
-
-# 0x473200 (VA 0xfffffe0007477200): SPx Sync (THE PRIMARY KERNEL EXCEPTION ENTRY!)
 struct.pack_into('<I', buf, 0x473200, branch_insn(0xfffffe0007477200, bs_handler_va))
-# 0x473280 (VA 0xfffffe0007477280): SPx IRQ
 struct.pack_into('<I', buf, 0x473280, branch_insn(0xfffffe0007477280, bs_handler_va))
-# 0x473380 (VA 0xfffffe0007477380): SPx SError
 struct.pack_into('<I', buf, 0x473380, branch_insn(0xfffffe0007477380, bs_handler_va))
-print("12. All 6 LowResetVector entries hooked to blue_screen_handler!")
-
-# 13. Hook _panic (foff: 0xa75348, VA 0xfffffe0007a79348) -> blue_screen_panic_msg
 struct.pack_into('<I', buf, 0xa75348, branch_insn(0xfffffe0007a79348, bs_panic_va))
-print("13. Hooked _panic -> blue_screen_panic_msg!")
+print("11. Blue Screen Handler and Exception Vectors installed!")
+
+# =========================================================================
+# 12. INJECT 22 STEP TRACERS INTO arm_vm_init
+# =========================================================================
+with open('/tmp/tracers.bin', 'rb') as f:
+    tracers_bin = f.read()
+
+tracers_off = 0x474600
+buf[tracers_off:tracers_off+len(tracers_bin)] = tracers_bin
+tracers_va = 0xfffffe0007478600
+
+wraps = {
+    '1': 0x48, '2': 0x80, '3': 0xb8, '4': 0xf0,
+    '5': 0x128, '6': 0x160, '7': 0x198, '8': 0x1d0,
+    '9': 0x208, 'A': 0x240, 'B': 0x278, 'C': 0x2b0,
+    'D': 0x2e8, 'E': 0x320, 'F': 0x358, 'G': 0x390,
+    'H': 0x3c8, 'I': 0x400, 'J': 0x438, 'K': 0x470,
+    'L': 0x4a8, 'M': 0x4e0
+}
+
+calls = [
+    (0x46eae8, '1'),
+    (0x46eb00, '2'),
+    (0x46eb44, '3'),
+    (0x46eb90, '4'),
+    (0x46ebc4, '5'),
+    (0x46ebe4, '6'),
+    (0x46ec18, '7'),
+    (0x46ec98, '8'),
+    (0x46ecc4, '9'),
+    (0x46ed2c, 'A'),
+    (0x46ed58, 'B'),
+    (0x46f45c, 'C'),
+    (0x46f488, 'D'),
+    (0x46f4c4, 'E'),
+    (0x46f4d8, 'F'),
+    (0x46f520, 'G'),
+    (0x46f534, 'H'),
+    (0x46f558, 'I'),
+    (0x46f584, 'J'),
+    (0x46f5cc, 'K'),
+    (0x46f618, 'L'),
+    (0x46f61c, 'M'),
+]
+
+for call_fo, char in calls:
+    call_va = 0xfffffe00072d4000 + (call_fo - 0x2d0000)
+    wrap_va = tracers_va + wraps[char]
+    insn = branch_insn(call_va, wrap_va)
+    # bl opcode has bit 31 set: 0x94000000 | imm26
+    bl_insn = (insn & 0x03ffffff) | 0x94000000
+    struct.pack_into('<I', buf, call_fo, bl_insn)
+    print(f"Hooked call at {hex(call_fo)} -> wrap_{char} ({hex(wrap_va)})")
 
 out_path = '/home/ksn/ios-giuluac/kernel.development.giulia'
 with open(out_path, 'wb') as f:
     f.write(buf)
 
-print(f"\nSUCCESS: Generated {out_path} ({len(buf)} bytes) with BLUE SCREEN EXCEPTION CAPTURE!")
+print(f"\nSUCCESS: Generated {out_path} ({len(buf)} bytes) with 22 STEP TRACERS!")
