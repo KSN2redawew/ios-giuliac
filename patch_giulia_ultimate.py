@@ -1,6 +1,6 @@
 import struct
 
-print("=== Patching Giulia Kernel with Live Visual Console ===")
+print("=== Patching Giulia Kernel with Visual Console & Fault Interceptors ===")
 with open('/home/ksn/ios-giuluac/kernel-in/kernel.development.dodge.new', 'rb') as f:
     buf = bytearray(f.read())
 
@@ -65,14 +65,12 @@ print(f"5. Injected early_putc ({len(putc_bin)} bytes) at {hex(putc_off)}")
 # 6. Injected early_mark at 0x4707ac with call to early_putc
 with open('/tmp/m.bin', 'rb') as f:
     mark_bin = bytearray(f.read())
-# Patch call_putc at offset 0xa4 in mark_bin
 struct.pack_into('<I', mark_bin, 0xa4, 0x17ffff29) # b 0xfffffe00074744f4
 mark_off = 0x4707ac
 buf[mark_off:mark_off+len(mark_bin)] = mark_bin
 print(f"6. Injected early_mark ({len(mark_bin)} bytes) at {hex(mark_off)}")
 
 # 7. Pre-initialize kputc function pointer at VA 0xfffffe0007296c18 (foff: 0x292c18)
-# Points directly to early_putc (0xfffffe00074744f4)
 kputc_off = 0x292c18
 struct.pack_into('<Q', buf, kputc_off, 0xfffffe00074744f4)
 print(f"7. Pre-initialized kputc at {hex(kputc_off)} -> 0xfffffe00074744f4")
@@ -92,8 +90,22 @@ ttb_call_off = 0x46f634
 struct.pack_into('<I', buf, ttb_call_off, 0xd503201f)
 print(f"10. NOPed out set_mmu_ttb(invalid_ttep) call at {hex(ttb_call_off)}")
 
+# 11. Hook _panic (foff: 0xa75348) -> panic_hook
+with open('/tmp/panic_hook.bin', 'rb') as f:
+    panic_bin = f.read()
+panic_off = 0xa75348
+buf[panic_off:panic_off+len(panic_bin)] = panic_bin
+print(f"11. Injected panic_hook ({len(panic_bin)} bytes) at {hex(panic_off)}")
+
+# 12. Hook sleb_trap (foff: 0x474b80) -> trap_hook
+with open('/tmp/trap_hook.bin', 'rb') as f:
+    trap_bin = f.read()
+trap_off = 0x474b80
+buf[trap_off:trap_off+len(trap_bin)] = trap_bin
+print(f"12. Injected trap_hook ({len(trap_bin)} bytes) at {hex(trap_off)}")
+
 out_path = '/home/ksn/ios-giuluac/kernel.development.giulia'
 with open(out_path, 'wb') as f:
     f.write(buf)
 
-print(f"\nSUCCESS: Generated {out_path} ({len(buf)} bytes) with VISUAL CONSOLE & MILESTONE TEXT!")
+print(f"\nSUCCESS: Generated {out_path} ({len(buf)} bytes) with PANIC & TRAP INTERCEPTORS!")
