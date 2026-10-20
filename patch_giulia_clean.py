@@ -117,6 +117,12 @@ struct.pack_into('<I', buf, 0x46f8f8, 0xd503201f) # nop
 struct.pack_into('<I', buf, 0x46f914, 0xd503201f) # nop
 print('NOPed 0x46f8f8 and 0x46f914 -> bypassed segment contiguity panics!')
 
+# 10.3 Bypass ml_phys_read_data and ml_phys_write_data latency timeout panics
+# On Snapdragon SM8650, bus latency differs from Apple Silicon, triggering watchdog timeout.
+struct.pack_into('<I', buf, 0x4713d8, 0xd503201f) # nop (ml_phys_read_data timeout panic)
+struct.pack_into('<I', buf, 0x471768, 0xd503201f) # nop (ml_phys_write_data timeout panic)
+print('NOPed 0x4713d8 and 0x471768 -> bypassed ml_phys latency watchdog panics!')
+
 # 11. INJECT BLUE SCREEN HANDLER AT 0x474000
 with open('/tmp/blue_screen.bin', 'rb') as f:
     bs_bin = f.read()
