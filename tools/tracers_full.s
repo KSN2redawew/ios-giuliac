@@ -185,11 +185,26 @@ wrap_8:
     ldp     x29, x30, [sp, #32]
     ldp     x2, x3, [sp, #16]
     ldp     x0, x1, [sp], #48
-    mov     x16, #0x1b80
-    movk    x16, #0x747, lsl #16
+
+    // Call bzero(ttbr1_l2_table, 0x4000)
+    stp     x0, x30, [sp, #-16]!
+    mov     x16, #0x9a00
+    movk    x16, #0x7b0, lsl #16
     movk    x16, #0xfe00, lsl #32
     movk    x16, #0xffff, lsl #48
-    br      x16
+    blr     x16
+    ldp     x0, x30, [sp], #16
+
+    // Map 32MB blocks 106 and 107 into TTBR1 L2 table!
+    mov     x10, #0xd4000000
+    mov     x11, #0x60000000000000
+    movk    x11, #0x605
+    orr     x11, x11, x10
+    str     x11, [x0, #848]
+    mov     x14, #1
+    add     x14, x11, x14, lsl #25
+    str     x14, [x0, #856]
+    ret
 
 .global wrap_9
 wrap_9:
