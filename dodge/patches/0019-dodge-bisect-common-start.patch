@@ -1,0 +1,115 @@
+From fe11b2524d76f02a2ab5337d75db811a9624bb66 Mon Sep 17 00:00:00 2001
+From: palazik <gochmyradov0@gmail.com>
+Date: Tue, 20 Oct 2026 20:57:47 +0500
+Subject: [PATCH] dodge: bisect common_start with four more progress stripes
+
+The v8 image drew stripes 0 and 1 only, so XNU reaches start_first_cpu
+and finishes the bootstrap page tables but dies somewhere inside
+common_start, before the MMU is switched on. Split that window into four
+more stages: common_start entry, TCR_EL1 written, set_mmu_ttb returned,
+MAIR_EL1 written + TLB invalidated. The two existing late stripes move
+to 6 (about to enable the MMU) and 7 (MMU on) to make room.
+
+Each site was checked for free registers: the macro only touches x0-x2,
+and x19/x21/x22/x23/x25 and lr are left alone.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ osfmk/arm64/start.s | 41 ++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 36 insertions(+), 5 deletions(-)
+
+diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
+index 50c2c31..42dc196 100644
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -98,7 +98,17 @@
+  * them is the last point reached. Deliberately full width and at the top, so a
+  * marker cannot be missed in a photo (a small corner block was).
+  *
+- * Clobbers x0-x5 only, and uses no stack, so it is safe this early. Works with
++ * Stages:
++ *   0  start_first_cpu entered
++ *   1  bootstrap page tables built
++ *   2  common_start entered
++ *   3  TCR_EL1 programmed
++ *   4  TTBR0 (V=P root) programmed
++ *   5  MAIR_EL1 programmed, TLB invalidated
++ *   6  about to enable the MMU
++ *   7  MMU on
++ *
++ * Clobbers x0-x2 only, and uses no stack, so it is safe this early. Works with
+  * the MMU off (plain physical store) and with the bootstrap MMU on, because the
+  * framebuffer is identity-mapped by the block added after create_bootstrap_mapping.
+  */
+@@ -685,6 +695,11 @@ Lkernelcache_base_found:
+  */
+ common_start:
+ 
++#if defined(DODGE)
++	/* Stage 2: common_start entered. */
++	DODGE_BAND 2
++#endif
++
+ #if HAS_NEX_PG
+ 	mov x19, lr
+ 	bl		EXT(set_nex_pg)
+@@ -697,6 +712,11 @@ common_start:
+ 	ldr		x1, [x0, SR_RESTORE_TCR_EL1]
+ 	MSR_TCR_EL1_X1
+ 
++#if defined(DODGE)
++	/* Stage 3: TCR_EL1 programmed (sysreg_restore was readable). */
++	DODGE_BAND 3
++#endif
++
+ 	/* Set up translation table base registers.
+ 	 *	TTBR0 - V=P table @ top of kernel
+ 	 *	TTBR1 - KVA table @ top of kernel + 1 page
+@@ -710,6 +730,12 @@ common_start:
+ 	mov		x19, lr
+ 	bl		EXT(set_mmu_ttb)
+ 	mov		lr, x19
++
++#if defined(DODGE)
++	/* Stage 4: TTBR0 (V=P root) programmed; set_mmu_ttb returned. */
++	DODGE_BAND 4
++#endif
++
+ 	add		x0, x25, PGBYTES
+ 	and		x0, x0, #(TTBR_BADDR_MASK)
+ 	MSR_TTBR1_EL1_X0
+@@ -737,6 +763,11 @@ common_start:
+ 	tlbi	vmalle1
+ 	dsb		ish
+ 
++#if defined(DODGE)
++	/* Stage 5: MAIR_EL1 programmed and the TLB invalidated. */
++	DODGE_BAND 5
++#endif
++
+ 
+ #if defined(BCM2837)
+ 	// Setup timer interrupt routing; must be done before MMU is enabled
+@@ -793,8 +824,8 @@ common_start:
+ #endif /* HAS_APPLE_PAC */
+ 
+ #if defined(DODGE)
+-	/* Stage 2: about to enable the MMU (TTBRs/TCR/MAIR already programmed). */
+-	DODGE_BAND 2
++	/* Stage 6: about to enable the MMU (TTBRs/TCR/MAIR already programmed). */
++	DODGE_BAND 6
+ #endif
+ 
+ 	// Enable caches, MMU, ROP and JOP
+@@ -803,9 +834,9 @@ common_start:
+ 	isb		sy
+ 
+ #if defined(DODGE)
+-	/* Stage 3: MMU is on. Reaching this also proves the framebuffer block in
++	/* Stage 7: MMU is on. Reaching this also proves the framebuffer block in
+ 	 * the bootstrap tables is correct, since this store now goes through it. */
+-	DODGE_BAND 3
++	DODGE_BAND 7
+ #endif
+ 
+ #if !VMAPPLE && !defined(DODGE)
