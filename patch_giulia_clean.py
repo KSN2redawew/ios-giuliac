@@ -128,6 +128,12 @@ print('NOPed 0x4713d8 and 0x471768 -> bypassed ml_phys latency watchdog panics!'
 struct.pack_into('<I', buf, 0x474008, 0x1400002b) # b 0x4740b4
 print('Patched 0x474008 -> b 0x4740b4 (bypassed bootstrap stack check panic!)')
 
+# 10.5 Bypass zone_require and zone_require_ro panics:
+# These are hardening validation assertions that fail on relocated memory maps.
+struct.pack_into('<I', buf, 0xa854fc, 0xd65f03c0) # ret (zone_require)
+struct.pack_into('<I', buf, 0xa85c74, 0xd65f03c0) # ret (zone_require_ro)
+print('Patched 0xa854fc & 0xa85c74 -> ret (bypassed zone_require & zone_require_ro panics!)')
+
 # 11. INJECT BLUE SCREEN HANDLER INTO FREE PADDING AT 0xb09100 (VA 0xfffffe0007b0d100)
 subprocess.check_call(['aarch64-linux-gnu-as', 'tools/blue_screen.s', '-o', '/tmp/blue_screen.o'], cwd='/home/ksn/ios-giuluac')
 subprocess.check_call(['aarch64-linux-gnu-ld', '--section-start=.text=0xfffffe0007b0d100', '/tmp/blue_screen.o', '-o', '/tmp/blue_screen.elf'], cwd='/home/ksn/ios-giuluac')
