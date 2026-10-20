@@ -9,9 +9,9 @@ with open('/home/ksn/ios-giuluac/kernel-in/kernel.development.dodge.new', 'rb') 
 tcr_off = 0x16fa18
 struct.pack_into('<Q', buf, tcr_off, 0x226516a519)
 
-# 2. start.s bootstrap TTBR1 L1 mapping: map L2 table into BOTH TTBR0 [x3] and TTBR1 [x3, #0x4000]!
+# 2. start.s bootstrap TTBR1 L1 mapping: map L2 table into TTBR1 entry 0, 32 (kernel text/data), 61 (heap/zone map), 63 (top map)
 l1_off = 0x47921c
-l1_patch = bytes.fromhex('6b0080d2 4c8c7492 6c010caa 6c0000f9 6c8000f9 6c801ff9 1f2003d5 1f2003d5')
+l1_patch = bytes.fromhex('6b0080d2 4c8c7492 6c010caa 6c0000f9 6c8000f9 6cf400f9 6cfc00f9 1f2003d5')
 buf[l1_off:l1_off+len(l1_patch)] = l1_patch
 
 # 3. start.s framebuffer bootstrap mapping (32MB blocks at 0xd4000000 and 0xd6000000)
@@ -104,11 +104,11 @@ for line in nm_out.splitlines():
 struct.pack_into('<I', buf, 0x46f634, 0xd503201f) # nop
 print('NOPed 0x46f634 (set_ttbr0) -> TTBR0 stays active for framebuffer')
 
-# 10.1 NOP out tlbi vmalle1is / dsb / isb since TTBR0 is kept alive
-struct.pack_into('<I', buf, 0x46f638, 0xd503201f) # nop tlbi
-struct.pack_into('<I', buf, 0x46f63c, 0xd503201f) # nop dsb
-struct.pack_into('<I', buf, 0x46f640, 0xd503201f) # nop isb
-print('NOPed 0x46f638..0x46f640: keep TLB cache intact across arm_vm_init')
+# 10.1 Patch tlbi vmalle1is -> tlbi vmalle1 (non-shareable) to avoid DSU hang
+struct.pack_into('<I', buf, 0x46f638, 0xd508871f) # tlbi vmalle1
+struct.pack_into('<I', buf, 0x46f63c, 0xd5033f9f) # dsb sy
+struct.pack_into('<I', buf, 0x46f640, 0xd5033fdf) # isb
+print('Patched 0x46f638: tlbi vmalle1 + dsb sy + isb')
 
 # 10.2 Bypass segment contiguity panics in arm_vm_init:
 # 0x46f8f8: b.ne 0x46fc68 -> nop (bypass segDATACONSTB == segTEXTB + segSizeTEXT)
