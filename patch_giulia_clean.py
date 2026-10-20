@@ -57,6 +57,13 @@ with open('/tmp/p.bin', 'rb') as f:
     putc_bin = f.read()
 buf[0x4704f4:0x4704f4+len(putc_bin)] = putc_bin
 
+# 5.5 Embed ISO font into __TEXT_EXEC padding at 0xb06200 (VA 0xfffffe0007b0a200)
+# This ensures early_putc can read font even when __DATA is not mapped yet!
+with open('/tmp/iso_font.bin', 'rb') as f:
+    font_bin = f.read()
+buf[0xb06200:0xb06200+len(font_bin)] = font_bin
+print(f"Embedded {len(font_bin)} bytes font into __TEXT_EXEC at 0xb06200 (VA 0xfffffe0007b0a200)")
+
 # 6. Injected early_mark at 0x4707ac
 with open('/tmp/m.bin', 'rb') as f:
     mark_bin = bytearray(f.read())
