@@ -1,6 +1,6 @@
 import struct
 
-print("=== Patching Giulia Kernel with Full 35 Step Tracers & HighResetVector Traps ===")
+print("=== Patching Giulia Kernel: Preserve Shim TTBR0 & Full 35 Tracers ===")
 with open('/home/ksn/ios-giuluac/kernel-in/kernel.development.dodge.new', 'rb') as f:
     buf = bytearray(f.read())
 
@@ -51,6 +51,10 @@ for s, off in enumerate(stripe_loop_offsets):
     patch_loc = off - 16
     buf[patch_loc:patch_loc+16] = patch
 
+# 4.5 CRITICAL: DO NOT OVERWRITE SHIM'S TTBR0 TABLE IN start.s (foff: 0x47935c)!
+# NOP out 'bl 0x47d864' so ttbr0_el1 remains pointing to shim's permanent 8GB table in DRAM
+struct.pack_into('<I', buf, 0x47935c, 0xd503201f)
+
 # 5. Injected early_putc at 0x4704f4
 with open('/tmp/p.bin', 'rb') as f:
     putc_bin = f.read()
@@ -79,7 +83,6 @@ struct.pack_into('<I', buf, 0x46f634, 0xd503201f)
 struct.pack_into('<I', buf, 0x46f6c8, 0x14000072)
 
 # 10.6 NOP out unmapped dodge_early_disabled store (foff: 0x470ba4)
-# 'strb w8, [x9, #2856]' attempts to write to unmapped 0xfffffe0008095b28!
 struct.pack_into('<I', buf, 0x470ba4, 0xd503201f)
 
 # 11. INJECT BLUE SCREEN HANDLER AT 0x474000
@@ -179,4 +182,4 @@ out_path = '/home/ksn/ios-giuluac/kernel.development.giulia'
 with open(out_path, 'wb') as f:
     f.write(buf)
 
-print(f'\nSUCCESS: Generated {out_path} ({len(buf)} bytes) with HighResetVector & Clean Tracers!')
+print(f'\nSUCCESS: Generated {out_path} ({len(buf)} bytes) preserving Shim TTBR0!')
